@@ -69,15 +69,9 @@ the same room.
 
 ## Reach
 
-- [ ] **The European version, with its five languages** (English, French,
-      German, Italian, Spanish; players have asked for them): a map of the
-      European game made with the decomp's `dsd` tool (only the USA and
-      Japanese maps exist), the USA-specific fixes found in it (the leak
-      patch, the anti-piracy functions, thread switching, the 3D queue, the
-      stylus-arrow tags), European DQVC and download data, and a Language
-      menu that sets the DS's language. Needs a European cartridge file to
-      build and test with. European and USA players can't play together.
-- [ ] **The Japanese version** (its map already exists in the decomp).
+- [x] **European ROM** (YDQP): tools/region.py moves the USA symbol map's
+      addresses; Language menu (English, French, German, Italian, Spanish).
+- [ ] **Japanese ROM** in BUILD.bat.
 
 ## Loose ends
 

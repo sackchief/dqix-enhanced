@@ -23,8 +23,8 @@ natively, plus the runtime that stands in for the DS hardware.
 
 ## Getting started (Windows)
 
-You need your own Dragon Quest IX cartridge's ROM (the USA version is the
-tested one; the build tries any version), Windows
+You need your own Dragon Quest IX cartridge's ROM (the USA or the
+European version; the build tries any version), Windows
 10 or 11 (64-bit), about 3 GB of free space, and the internet the first time.
 
 The easy way is **`Install Dragon Quest IX.bat`**: a setup window that does
@@ -371,6 +371,28 @@ Generated C is derived from the game: never share it. The project itself contain
 * Time follows the DS clock. The recompiler adds each straight run of
   instructions' cycle cost; every 512 ARM9 cycles (2,048 ARM7) the runtime
   turns them into bus time, runs the other CPU and delivers interrupts.
+* `hooks.txt` lists functions the runtime wraps: the recompiled function is
+  emitted as `<name>_orig` and `hook_<Name>(c, orig)` (runtime) is called
+  instead. USA addresses; `tools/region.py` moves them for the EU ROM.
+* HD text (`runtime/hdtext.c`): the game blits each letter (1 bit per pixel,
+  12 rows) into a window's 4-bit tile buffer in RAM (`GlyphBlit`, hooked).
+  Every pixel of a letter's box gets a tag (letter instance, x, y, ink);
+  tags follow DMA, CpuSet/CpuFastSet and `Memcpy` (hooked) into VRAM and are
+  dropped on any other write. The 2D engines read the tags of text
+  background pixels: the front-most tagged pixels are left out of the
+  picture and their letters listed with screen position and ink colour.
+  `gl_render.c` draws each letter as a quad from an atlas (8 px per DS
+  pixel, rendered with stb_truetype, scaled to the DS 'H' and baseline),
+  clipped to the letter boxes the game shows. Game logic never sees any of
+  it (the per-frame CRC with HD text on matches the one with it off in
+  Classic mode).
+* Textures (`gl_render.c`): each decoded texture is keyed by FNV-1a 64 of
+  width, height and RGBA (see-through texels as 0). `textures/**/<key>.png`
+  replaces it (loaded on first use, mipmapped, at most 3000 in the GPU);
+  dumping writes `textures/dump/<key>.png`. Upscaled textures run xBR level
+  1 at 4x (2x above 128x128 texels, none above 256x256) on the CPU when a
+  texture is decoded. Smooth 2D runs the same xBR rule in the compose
+  shader on the 2D layers (not where 3D shows).
 
 ## Later
 

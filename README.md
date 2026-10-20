@@ -2,8 +2,8 @@
 
 **Dragon Quest IX: Sentinels of the Starry Skies, as a native PC game.**
 
-This project turns your own copy of Dragon Quest IX (the USA DS cartridge's
-ROM) into a real Windows program, built on your PC from your ROM. Nothing
+This project turns your own copy of Dragon Quest IX (the USA or European DS
+cartridge's ROM) into a real Windows program, built on your PC from your ROM. Nothing
 from the game is included here: no code, no graphics, no music. It isn't an
 emulator running the DS's code. The game's code has been recompiled into
 native PC code, with the DS's hardware rebuilt around it. So it can play
@@ -26,6 +26,20 @@ news, and friends to play with.
   DS's resolution, or Auto: as sharp as your monitor shows it, and
   optional smooth textures. Switch between Classic and Enhanced at any
   time (F5).
+- **Sharper pictures** (Graphics menu, Enhanced mode):
+  - **HD text**: the game's text drawn again at full resolution with a
+    real font (Georgia at first, or any .ttf in the `fonts` folder or
+    Windows' fonts), or the game's own letters smoothed.
+  - **Upscaled textures**: the 3D textures enlarged 4x with xBR, so slopes
+    and curves stay clean instead of blocky.
+  - **Smooth 2D**: menus, maps, icons and the bottom screen smoothed with
+    xBR.
+  - **HD texture packs**: PNGs in the `textures` folder are drawn instead of
+    the game's textures. To make one, turn on "Dump textures", play (every
+    texture shown lands in `textures\dump`), upscale or redraw those PNGs
+    (keep their names and their transparency) and put them anywhere in
+    `textures` outside `dump`. "Reload the HD textures" picks up changes
+    without restarting.
 - **The DS Lite look** (on at first): a screen filter with the DS Lite's
   colours, pixel grid, motion blur and backlight levels, and the screens
   inside a photo of a real DS Lite (or a drawn one in six colours), even at
@@ -79,8 +93,9 @@ original)
 
 ## Getting started
 
-You need your own Dragon Quest IX cartridge's ROM (`.nds`; the USA version
-is the tested one, others can be tried), Windows 10 or 11 (64-bit), about 3 GB of free space, and the internet the
+You need your own Dragon Quest IX cartridge's ROM (`.nds`; the USA or
+European version, others can be tried; the European one plays in the language
+chosen in the Language menu), Windows 10 or 11 (64-bit), about 3 GB of free space, and the internet the
 first time.
 
 1. Download the latest **stable** release from the

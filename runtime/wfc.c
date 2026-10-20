@@ -196,15 +196,21 @@ static char* load_file(const char* path, int* size);
 typedef struct { uint32_t id, price, qty; } StockItem;
 #include "dqvc_schedule.h"
 #define DQVC_DAILY_ITEMS 12             /* of the week's pool, per day */
+/* The USA (YDQE) and European (YDQP) versions: the same downloads (the
+ * quests and DQVC's items are numbers, the same in both); only the news
+ * message is in its own file. */
+static int builtin_game(const char* gamecd) { return !strcmp(gamecd, "YDQE") || !strcmp(gamecd, "YDQP"); }
+static const char* news_file(const char* gamecd) { return !strcmp(gamecd, "YDQP") ? "infomes_45.bin" : "infomes_47.bin"; }
+
 /* This week's stock for the game, built from dqvc.txt: a malloc'd file and
  * its name, or NULL (no schedule). */
 /* The sale schedule: wfc/<game>/dqvc.txt if there is one (with the names,
- * for reading), else the one built in (numbers only, dqvc_schedule.h; USA). */
+ * for reading), else the one built in (numbers only, dqvc_schedule.h; USA's, used for Europe too). */
 static int dqvc_schedule(const char* gamecd, DqvcWeek** weeks_out, DqvcItem** items_out, int* nweeks) {
     char p[700]; snprintf(p, sizeof p, "%s/%s/dqvc.txt", g_dir, gamecd);
     int n = 0; char* txt = load_file(p, &n);
     if (!txt) {
-        if (strcmp(gamecd, "YDQE")) return 0;
+        if (!builtin_game(gamecd)) return 0;
         *weeks_out = (DqvcWeek*)DQVC_WEEKS; *items_out = (DqvcItem*)DQVC_ITEMS;
         *nweeks = (int)(sizeof DQVC_WEEKS / sizeof DQVC_WEEKS[0]);
         return 1;
@@ -473,14 +479,14 @@ static char* http(const char* req, int reqlen, int* outlen) {
         for (int i = 0; i < 4 && okcd; i++) okcd = (gamecd[i] >= 'A' && gamecd[i] <= 'Z') || (gamecd[i] >= '0' && gamecd[i] <= '9');
         char p[700]; snprintf(p, sizeof p, "%s/%s/_list.txt", g_dir, okcd ? gamecd : "none");
         int ln = 0; char* list = okcd ? load_file(p, &ln) : NULL;
-        if (!list && okcd && !strcmp(gamecd, "YDQE")) {
+        if (!list && okcd && builtin_game(gamecd)) {
             /* no _list.txt: the quests and DQVC built in, and the news if the build fetched it */
             int ql = 0; free(dlc_quest_file(&ql));
             list = malloc(512);
             int o = snprintf(list, 512, DLC_QUEST_FILE "\t\tquest\t\t\t%d\r\nauction_0.bin\t\tauction\t\t\t0\r\n", ql);
-            char np[700]; snprintf(np, sizeof np, "%s/%s/infomes_47.bin", g_dir, gamecd);
+            char np[700]; snprintf(np, sizeof np, "%s/%s/%s", g_dir, gamecd, news_file(gamecd));
             int nl = 0; char* news = load_file(np, &nl);
-            if (news) { snprintf(list + o, (size_t)(512 - o), "infomes_47.bin\t\tmes\t\t\t%d\r\n", nl); free(news); }
+            if (news) { snprintf(list + o, (size_t)(512 - o), "%s\t\tmes\t\t\t%d\r\n", news_file(gamecd), nl); free(news); }
         }
         char hits[2048] = ""; int count = 0;
         char wname[64] = "", wtitle[128]; int wlen = 0;
@@ -511,7 +517,7 @@ static char* http(const char* req, int reqlen, int* outlen) {
                 binlen = wl;
             } else
             bin = okn && okcd ? load_file(p, &binlen) : NULL;
-            if (!bin && okn && !strcmp(gamecd, "YDQE") && !strcmp(name, DLC_QUEST_FILE)) bin = (char*)dlc_quest_file(&binlen);   /* built in */
+            if (!bin && okn && builtin_game(gamecd) && !strcmp(name, DLC_QUEST_FILE)) bin = (char*)dlc_quest_file(&binlen);   /* built in */
             if (bin) { ctype = "application/x-dsdl"; snprintf(extrab, sizeof extrab, "Content-Disposition: attachment; filename=\"%s\"\r\n", name); extra = extrab; }
             else status = 404;
         }

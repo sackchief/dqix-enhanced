@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "hdtext.h"
+extern int g_comp_gl;                                           /* (below) GL composition: the 3D and HD text on the GPU */
 
 uint32_t g_screen[2][256 * 192];
 uint32_t g_engine_out[2][256 * 192];
@@ -69,9 +71,9 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 
 /* ---------------------------------------------------------------- line buffers */
 #define PX_OPAQUE 0x10000u
-typedef struct { uint32_t col[256]; } BgLine;                        /* raw 16-bit colour | PX_OPAQUE */
+typedef struct { uint32_t col[256]; uint32_t src[256]; uint32_t tag[256]; int tags; } BgLine;   /* raw 16-bit colour | PX_OPAQUE; src: where it came from (VRAM byte * 2 + high nibble); tag: HD text (hdtext.h) */
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; } ObjLine;
+typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; uint32_t src[256]; } ObjLine;
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t disp = R32(e, 0);
@@ -90,6 +92,8 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     }
     uint32_t yy = (y + vofs) & (h - 1);
     uint32_t ty = yy >> 3;
+    int hd = g_hdtext_on && g_hdtext_any && g_comp_gl && !c256;   /* the letters are 4-bit */
+    out->tags = 0;
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
         uint32_t tx = xx >> 3;
@@ -108,6 +112,8 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
             if (!row) idx = 0;
             else if (c256) idx = row[px];
             else idx = (row[px >> 1] >> ((px & 1) * 4)) & 15;
+            out->src[x] = c256 ? (charbase + tile * 64 + py * 8 + px) * 2 : (charbase + tile * 32 + py * 4 + (px >> 1)) * 2 + (px & 1);
+            if (hd) { uint32_t t = row ? hdtext_tag(out->src[x]) : 0; out->tag[x] = t; out->tags |= t != 0; }
             if (!idx) { out->col[x] = 0; continue; }
             uint16_t col;
             if (c256) col = ext ? ext16(ext, (ent >> 12) * 256 + idx) : pal16(e->pal + idx * 2);
@@ -139,6 +145,7 @@ static void render_affine_bg(Engine* e, int eng, int bg, int kind, BgLine* out) 
     const uint8_t* ext = NULL;
     if (kind == 2 && !bitmap && (disp & 0x40000000)) ext = ext_bg_pal(eng, bg);
     uint32_t bmbase = e->bgvram + ((cnt >> 8) & 31) * 0x4000;
+    out->tags = 0;
     for (int x = 0; x < 256; x++, rx += pa, ry += pc) {
         int32_t tx = rx >> 8, ty = ry >> 8;
         if (wrap) { tx &= (int32_t)w - 1; ty &= (int32_t)h - 1; }
@@ -227,6 +234,7 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
             }
             uint16_t col;
             int opaque;
+            uint32_t objsrc = 0;
             if (mode == 3) {                                        /* bitmap sprite */
                 uint32_t addr;
                 if (disp & 0x40) addr = e->objvram + tile * (128u << ((disp >> 22) & 1)) + (ty * w + tx) * 2;
@@ -247,6 +255,7 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 uint8_t idx;
                 if (c256) idx = vr8(addr + (ty & 7) * 8 + (tx & 7));
                 else { uint8_t b = vr8(addr + (ty & 7) * 4 + (tx & 7) / 2); idx = (tx & 1) ? b >> 4 : b & 15; }
+                if (idx) objsrc = c256 ? (addr + (ty & 7) * 8 + (tx & 7)) * 2 : (addr + (ty & 7) * 4 + (tx & 7) / 2) * 2 + (tx & 1);
                 opaque = idx != 0;
                 if (c256) col = ext ? ext16(ext, (a2 >> 12) * 256 + idx) : pal16(e->pal + 0x200 + idx * 2);
                 else col = pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
@@ -261,6 +270,7 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 out->prio[sx] = (uint8_t)prio;
                 out->flag[sx] = mode == 3 ? (uint8_t)(0xC0 | ((a2 >> 12) + 1)) : mode == 1 ? 0x80 : 0x10;
                 out->mos[sx] = (uint8_t)mosaic;
+                out->src[sx] = objsrc;
             }
         }
     }
@@ -466,7 +476,9 @@ static void render_engine_line(int eng, int y) {
 /* Compose one line of BG/OBJ layers (6-bit, before master brightness) into
  * line6; when dst is given, also write the displayed pixels (and the GPU
  * renderer's per-pixel info). */
+static int g_pixsrc_on = -1, g_pixsrc[4];                       /* DQIX_PIXSRC=frame,engine,x,y: where that pixel comes from (debugging) */
 static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* line6, uint32_t* dst, uint16_t mb) {
+    if (g_pixsrc_on < 0) { const char* ps = getenv("DQIX_PIXSRC"); g_pixsrc_on = ps && sscanf(ps, "%d,%d,%d,%d", &g_pixsrc[0], &g_pixsrc[1], &g_pixsrc[2], &g_pixsrc[3]) == 4; }
 
     int mode = disp & 7;
     static BgLine bgl[4];
@@ -537,12 +549,34 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     uint8_t* info = &g_comp_info[y * 256 * 4];
     uint32_t mbbyte = (uint32_t)((((mb >> 14) & 3) << 5) | ((mb & 31) > 16 ? 16 : (mb & 31))) << 24;
     #define MARK3D 0xFFu                                            /* GL mode: the 3D layer, decided on the GPU */
+    int hdl = 0;                                                    /* HD text: letters on this line (hdtext.h) */
+    if (g_hdtext_on && dst && g_comp_gl) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && bgl[bg].tags && !(bg == 0 && bg_3d)) hdl = 1;
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
         uint8_t wm = winmask[x];
+        int skipL = -1;
+        if (hdl) {
+            /* the front-most layer here, when it shows part of a letter's box:
+             * left out of the picture, the letter is drawn at full resolution */
+            for (int k = norder - 1; k >= 0; k--) {
+                int L = order[k];
+                if (L >= 4) { if ((wm & 0x10) && (objl.col[x] & PX_OPAQUE) && objl.prio[x] == L - 4) break; continue; }
+                if (L == 0 && bg_3d) { if (wm & 1) { if (gl3d) break; if (g_3d_present && (g_3d_line32[x] >> 24)) break; } continue; }
+                if (!(wm & (1 << L))) continue;
+                if (bgl[L].tags && bgl[L].tag[x]) { skipL = L; break; }
+                if (bgl[L].col[x] & PX_OPAQUE) break;
+            }
+            if (skipL >= 0) {
+                uint32_t t = bgl[skipL].tag[x];
+                int ink = (bgl[skipL].col[x] & PX_OPAQUE) && HDT_INK(t);
+                hdtext_seen(eng, t, x, y, ink, ink ? to_rgb6(master_bright(to6(bgl[skipL].col[x]), mb)) : 0);
+                g_hdtext_mask[eng][y * 256 + x] = 255;
+            }
+        }
         for (int k = 0; k < norder; k++) {
             int L = order[k];
             uint32_t v;
+            if (L == skipL) continue;
             if (L >= 4) {
                 if (!(wm & 0x10) || !(objl.col[x] & PX_OPAQUE) || objl.prio[x] != L - 4) continue;
                 v = to6(objl.col[x]) | ((uint32_t)objl.flag[x] << 24);
@@ -559,6 +593,18 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
                 v = to6(bgl[L].col[x]) | (1u << (24 + L));
             }
             v3 = v2; v2 = v1; v1 = v;
+        }
+        if (g_pixsrc_on && (x == g_pixsrc[2] || g_pixsrc[2] < 0) && y == g_pixsrc[3] && eng == g_pixsrc[1] && g_frame == (uint64_t)g_pixsrc[0]) {
+            int L = -1;
+            for (int k = norder - 1; k >= 0 && L < 0; k--) {
+                int l = order[k];
+                if (l >= 4) { if ((wm & 0x10) && (objl.col[x] & PX_OPAQUE) && objl.prio[x] == l - 4) L = l; }
+                else if (l != 0 || !bg_3d) { if ((wm & (1 << l)) && (bgl[l].col[x] & PX_OPAQUE)) L = l; }
+            }
+            uint32_t sv = L < 0 ? 0 : L >= 4 ? objl.src[x] : bgl[L].src[x];
+            uint8_t* vp = sv ? vram_ptr(sv >> 1) : NULL;
+            fprintf(stderr, "PIXSRC f%llu eng %d (%d,%d): layer %d src %08x nib %u vram+%lx\n", (unsigned long long)g_frame, eng, x, y, L, sv >> 1, sv & 1,
+                    vp ? (long)(vp - vram_bank(0)) : -1L);
         }
         int fx = (wm & 0x20) != 0;
         if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, eva, evb, evy); continue; }
@@ -605,6 +651,7 @@ static void latch_affine(int eng, int bg) {
 void gpu_affine_written(int eng, int bg) { latch_affine(eng, bg); }
 
 void gpu_frame_start(void) {
+    if (g_hdtext_on) hdtext_frame_start();
     for (int eng = 0; eng < 2; eng++) {
         Engine* e = &g_eng[eng];
         for (int bg = 2; bg < 4; bg++) latch_affine(eng, bg);

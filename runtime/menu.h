@@ -20,6 +20,9 @@ enum {
     MI_CORNER0 = 250,                                                   /* + 0..3: top left, top right, bottom right, bottom left */
     MI_SSIZE0 = 254,                                                    /* + 0..2: small, medium, large */
     MI_SEND_REPORT = 210,
+    MI_LANG1 = 270,                                                     /* English, French, German, Italian, Spanish (+0..4) */
+    MI_TEXPACK = 280, MI_TEXDUMP, MI_TEXRELOAD, MI_HDTEXT, MI_SMOOTH2D, MI_TEXUP,
+    MI_FONT0 = 290,                                                     /* HD text fonts (+0..5, see g_fonts in frontend_sdl.c) */
 };
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i) */

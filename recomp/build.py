@@ -571,9 +571,10 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--per-file", type=int, default=400)
-    ap.add_argument("--hle", help="file listing '<module> <addr>' functions the runtime provides instead")
+    ap.add_argument("--hle", help="file listing '<module> <addr> [name]' functions the runtime provides instead (as hle_<name>, or under the generated name)")
     ap.add_argument("--interpret", help="file listing '<module> <addr>' functions to run in the interpreter (code that changes at run time)")
     ap.add_argument("--patch", help="file listing '<module> <addr> <new 32-bit ARM word>' instruction overrides (e.g. removing anti-piracy traps)")
+    ap.add_argument("--hooks", help="file listing '<module> <addr> <name>' functions the runtime watches: they are kept, renamed <name>_orig, and calls go to hook_<name>(c, orig), which runs them")
     ap.add_argument("--tags", help="file listing '<module> <call addr> <tag>': the 3D drawn during these calls carries the tag (e.g. the stylus arrow, hidden while walking with a stick); the game's code is unchanged")
     args = ap.parse_args()
 
@@ -592,12 +593,18 @@ def main():
             line = line.split("#")[0].split()
             if len(line) == 2:
                 interp.add((line[0], int(line[1], 16)))
-    hle = set()
+    hooks = {}
+    if args.hooks:
+        for line in open(args.hooks):
+            line = line.split("#")[0].split()
+            if len(line) == 3:
+                hooks[(line[0], int(line[1], 16))] = line[2]
+    hle = {}
     if args.hle:
         for line in open(args.hle):
             line = line.split("#")[0].split()
-            if len(line) == 2:
-                hle.add((line[0], int(line[1], 16)))
+            if len(line) in (2, 3):
+                hle[(line[0], int(line[1], 16))] = line[2] if len(line) == 3 else None
     os.makedirs(args.out, exist_ok=True)
 
     # Translate everything in memory first: translating can discover secondary
@@ -614,10 +621,25 @@ def main():
                 fn.interpreted = True
                 continue
             if (fn.module.name, fn.addr) in hle:
-                code[(fn.module.name, fn.addr)] = f"/* {fn.cname}: provided by the runtime (HLE) */"
+                name = hle[(fn.module.name, fn.addr)]
+                if name:      # the runtime's hle_<name>, whatever the address is in this ROM
+                    code[(fn.module.name, fn.addr)] = (f"/* {fn.name}: provided by the runtime (HLE) */\n"
+                                                       f"void hle_{name}(Cpu* c);\n"
+                                                       f"void {fn.cname}(Cpu* c) {{ hle_{name}(c); }}")
+                else:
+                    code[(fn.module.name, fn.addr)] = f"/* {fn.cname}: provided by the runtime (HLE) */"
                 rc.stats["hle_functions"] += 1
                 continue
             code[(fn.module.name, fn.addr)] = rc.emit_func(fn)
+            if (fn.module.name, fn.addr) in hooks:      # the original under another name, and the runtime's hook in front of it
+                name = hooks[(fn.module.name, fn.addr)]
+                head = f"void {fn.cname}(Cpu* c) {{"
+                assert head in code[(fn.module.name, fn.addr)], fn.cname
+                code[(fn.module.name, fn.addr)] = (code[(fn.module.name, fn.addr)].replace(head, f"void {fn.cname}_orig(Cpu* c) {{", 1) +
+                                                   f"\n/* {fn.name}: watched by the runtime (hook) */\n"
+                                                   f"void hook_{name}(Cpu* c, void (*orig)(Cpu*));\n"
+                                                   f"void {fn.cname}(Cpu* c) {{ hook_{name}(c, {fn.cname}_orig); }}")
+                rc.stats["hooked_functions"] = rc.stats.get("hooked_functions", 0) + 1
         queue, rc.pending = rc.pending, []
 
     funcs = list(rc.all_funcs())

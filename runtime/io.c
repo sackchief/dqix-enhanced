@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "hdtext.h"
 /* DQIX_RAMDUMP=dir,frame,frame...: main RAM at those frames (debugging) */
 static void ram_dump_check(void) {
     static int init; static char dir[256]; static unsigned long long at[64]; static int n;
@@ -130,11 +131,14 @@ static void dma_run(Core* k, int ch) {
     int word = (ctl >> 26) & 1, step = word ? 4 : 2;
     int sctl = (ctl >> 23) & 3, dctl = (ctl >> 21) & 3;
     uint32_t s = d->src, t = d->dst;
+    { static int lg = -1; if (lg < 0) lg = getenv("DQIX_DMALOG") != NULL;
+      if (lg && k->id == 0 && (t >> 24) == 6) fprintf(stderr, "[f%llu] DMA%d %08x -> %08x x%u %s\n", (unsigned long long)g_frame, ch, s, t, count, word ? "w" : "h"); }
     for (uint32_t i = 0; i < count; i++) {
         if (word) b->w32(t, b->r32(s)); else b->w16(t, b->r16(s));
         if (sctl == 0) s += step; else if (sctl == 1) s -= step;
         if (dctl == 0 || dctl == 3) t += step; else if (dctl == 1) t -= step;
     }
+    if (g_hdtext_any && k->id == 0 && sctl == 0 && (dctl == 0 || dctl == 3)) hdtext_copy(d->dst, d->src, count * (uint32_t)step);   /* HD text: the letters' tags go along */
     d->src = s;
     uint32_t base = 0xB0 + 12 * ch;
     if (dctl == 3) memcpy(&d->dst, &k->io[base + 4], 4); else d->dst = t;

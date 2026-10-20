@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include "nds.h"
 #include "frontend.h"
+#include "hdtext.h"
 #include "gl_render.h"
 #include "menu.h"
 #include "version.h"
@@ -60,6 +61,11 @@ static SDL_Window* g_win2;                                        /* ...the seco
 static int g_win2_full, g_win2_rect[4];                           /* ...fullscreen; where it was as a window (w = 0: not yet) */
 static int g_wide_pop;                                            /* widescreen: the small screen in its own window (the field alone) */
 static int g_smooth = 0;                                          /* Enhanced: smooth (filtered) textures */
+static int g_smooth2d = 0, g_texup = 0;                           /* Enhanced: 2D smoothed, textures upscaled (xBR) */
+static int g_texpack = 1, g_texdump = 0;                          /* Enhanced: HD textures from textures/, dumping them */
+static int g_hdtext = 1;                                          /* Enhanced: the game's text drawn at full resolution (hdtext.h) */
+static char g_hdfont[256] = "georgia.ttf";                        /* ...with this font ("original": the game's letters, smoothed) */
+static const char* const g_fonts[6] = { "original", "georgia.ttf", "pala.ttf", "constan.ttf", "times.ttf", "segoeui.ttf" };   /* MI_FONT0 + i */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 50;                                  /* widescreen: how solid the small screen over the field is (O), % */
 static int g_wide_dyn;                                            /* widescreen: 0 basic (the corner stays), 1 dynamic (experimental: slides for menus) */
@@ -371,6 +377,9 @@ static int g_color_chosen;
 static void default_console_color(void) {
     for (int i = 0; i < g_nskins; i++) if (!strcmp(g_skins[i].file + 6, "dslite_black.png")) g_opt.shell_color = N_DRAWN + i;
 }
+/* settings.ini's names for g_fw_language (1-5), and the menu's */
+static const char* const LANGUAGE_KEY[6] = { "", "english", "french", "german", "italian", "spanish" };
+static const char* const LANGUAGE_NAME[6] = { "", "English", "Fran\xc3\xa7" "ais", "Deutsch", "Italiano", "Espa\xc3\xb1ol" };
 static void settings_load(void) {
     FILE* f = fopen(SETTINGS, "r");
     if (!f) return;
@@ -405,6 +414,12 @@ static void settings_load(void) {
         else if (!strcmp(key, "swap_screens")) g_swap = atoi(val) != 0;
         else if (!strcmp(key, "widescreen_popout")) g_wide_pop = atoi(val) != 0;
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
+        else if (!strcmp(key, "smooth_2d")) g_smooth2d = atoi(val) != 0;
+        else if (!strcmp(key, "upscale_textures")) g_texup = atoi(val) != 0;
+        else if (!strcmp(key, "hd_textures")) g_texpack = atoi(val) != 0;
+        else if (!strcmp(key, "dump_textures")) g_texdump = atoi(val) != 0;
+        else if (!strcmp(key, "hd_text")) g_hdtext = atoi(val) != 0;
+        else if (!strcmp(key, "hd_text_font")) snprintf(g_hdfont, sizeof g_hdfont, "%s", val);
         else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
         else if (!strcmp(key, "second_window")) { int r[4]; if (sscanf(val, "%d,%d,%d,%d", &r[0], &r[1], &r[2], &r[3]) == 4 && r[2] > 0 && r[3] > 0) memcpy(g_win2_rect, r, sizeof r); }
         else if (!strcmp(key, "second_window_fullscreen")) g_win2_full = atoi(val) != 0;
@@ -423,6 +438,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "actual_size")) g_opt.actual = atoi(val) != 0;
         else if (!strcmp(key, "monitor_width_mm")) g_opt.monitor_width_mm = (float)atof(val);
         else if (!strcmp(key, "downloadable_content")) g_opt.dlc = atoi(val) != 0;
+        else if (!strcmp(key, "language")) { for (int i = 1; i <= 5; i++) if (!strcmp(val, LANGUAGE_KEY[i])) g_fw_language = i; }
         else if (!strcmp(key, "wireless")) g_net_want = atoi(val) != 0;
         else if (!strcmp(key, "wfc_server")) snprintf(g_wfc_server, sizeof g_wfc_server, "%s", val);
         else if (!strcmp(key, "wireless_mac")) {
@@ -453,6 +469,18 @@ static void settings_save(void) {
     fprintf(f, "resolution_3d = %d\n", g_res_auto || g_scale3d > 4 ? 4 : g_scale3d);   /* for versions before v29 */
     fprintf(f, "# enhanced: smooth textures (filtered) instead of the DS's blocky texels: 0 or 1\n");
     fprintf(f, "smooth_textures = %d\n", g_smooth);
+    fprintf(f, "# enhanced: the 3D textures upscaled 4x with xBR (smooth slopes and curves): 0 or 1\n");
+    fprintf(f, "upscale_textures = %d\n", g_texup);
+    fprintf(f, "# enhanced: the 2D screens (menus, maps, sprites) smoothed with xBR: 0 or 1\n");
+    fprintf(f, "smooth_2d = %d\n", g_smooth2d);
+    fprintf(f, "# enhanced: HD textures from the textures folder (textures/<name>.png) instead of the game's: 0 or 1\n");
+    fprintf(f, "hd_textures = %d\n", g_texpack);
+    fprintf(f, "# enhanced: write every texture the game shows to textures/dump/, to make a pack from: 0 or 1\n");
+    fprintf(f, "dump_textures = %d\n", g_texdump);
+    fprintf(f, "# enhanced: the game's text at full resolution: 0 or 1\n");
+    fprintf(f, "hd_text = %d\n", g_hdtext);
+    fprintf(f, "# its font: original (the game's letters, smoothed) or a .ttf file in the fonts folder or Windows' fonts\n");
+    fprintf(f, "hd_text_font = %s\n", g_hdfont);
     fprintf(f, "# widescreen: the small screen (map, battle commands) in a window of its own: 0 or 1\n");
     fprintf(f, "widescreen_popout = %d\n", g_wide_pop);
     fprintf(f, "# window size: 1 to 8 times the DS screens (F3)\n");
@@ -502,6 +530,8 @@ static void settings_save(void) {
     fprintf(f, "monitor_width_mm = %g\n", g_opt.monitor_width_mm);
     fprintf(f, "# switch on every downloadable quest and special guest at start, without connecting: 0 or 1\n");
     fprintf(f, "downloadable_content = %d\n", g_opt.dlc);
+    fprintf(f, "# the game's language (European version; the USA version is in English): english, french, german, italian or spanish\n");
+    fprintf(f, "language = %s\n", LANGUAGE_KEY[g_fw_language]);
     fprintf(f, "# Wireless menu: connect to a community Nintendo Wi-Fi Connection server: 0 or 1\n");
     fprintf(f, "wireless = %d\n", g_net_want);
     fprintf(f, "# which server: builtin (offline, the files in the wfc folder), altwfc, wiimmfi, or another's DNS address\n");
@@ -529,6 +559,7 @@ static void apply_mode(void) {
     } else {
         g_renderer3d = gl_renderer3d(); g_comp_gl = 1; g_report_capture = gl_read_screens;
     }
+    g_hdtext_on = g_hdtext && !g_classic;
 }
 
 /* Audio drives the pacing: the game runs ~100 ms ahead of what is being
@@ -609,6 +640,15 @@ static int try_gl(void) {
     if (e) { g_scale3d = atoi(e); g_res_auto = 0; }
     if (getenv("DQIX_SMOOTH")) g_smooth = atoi(getenv("DQIX_SMOOTH")) != 0;   /* tests */
     gl_set_smooth(g_smooth);
+    if (getenv("DQIX_SMOOTH2D")) g_smooth2d = atoi(getenv("DQIX_SMOOTH2D")) != 0;   /* tests */
+    if (getenv("DQIX_TEXUP")) g_texup = atoi(getenv("DQIX_TEXUP")) != 0;
+    gl_set_smooth2d(g_smooth2d); gl_set_tex_upscale(g_texup);
+    if (getenv("DQIX_HD_TEXTURES")) g_texpack = atoi(getenv("DQIX_HD_TEXTURES")) != 0;   /* tests */
+    if (getenv("DQIX_DUMP_TEXTURES")) g_texdump = atoi(getenv("DQIX_DUMP_TEXTURES")) != 0;
+    gl_set_texture_pack(g_texpack); gl_set_texture_dump(g_texdump);
+    if (getenv("DQIX_HD_TEXT")) g_hdtext = atoi(getenv("DQIX_HD_TEXT")) != 0;
+    if (getenv("DQIX_HD_FONT")) snprintf(g_hdfont, sizeof g_hdfont, "%s", getenv("DQIX_HD_FONT"));
+    hdtext_set_font(g_hdfont);
     if (!gl_render_init(g_res_auto ? (getenv("DQIX_AUTO_FROM") ? 2 : 4) : g_scale3d)) {
         fprintf(stderr, "OpenGL renderer failed to start: using the software renderer\n");
         SDL_GL_DeleteContext(g_glctx); SDL_DestroyWindow(g_win); g_win = NULL; return 0;
@@ -1178,6 +1218,13 @@ static void menu_sync(void) {
     }
     menu_check(MI_POPOUT, g_wide_pop && wide); menu_enable(MI_POPOUT, g_gl);
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
+    menu_check(MI_SMOOTH2D, g_smooth2d); menu_enable(MI_SMOOTH2D, g_gl && !g_classic);
+    menu_check(MI_TEXUP, g_texup); menu_enable(MI_TEXUP, g_gl && !g_classic);
+    menu_check(MI_TEXPACK, g_texpack); menu_enable(MI_TEXPACK, g_gl && !g_classic);
+    menu_enable(MI_TEXRELOAD, g_gl && !g_classic && g_texpack);
+    menu_check(MI_TEXDUMP, g_texdump); menu_enable(MI_TEXDUMP, g_gl && !g_classic);
+    menu_check(MI_HDTEXT, g_hdtext); menu_enable(MI_HDTEXT, g_gl && !g_classic);
+    for (int i = 0; i < 6; i++) { menu_check(MI_FONT0 + i, !strcmp(g_hdfont, g_fonts[i])); menu_enable(MI_FONT0 + i, g_gl && !g_classic && g_hdtext); }
     menu_check(MI_LCD, g_opt.lcd); menu_enable(MI_LCD, g_gl);
     int lcd = g_gl && g_opt.lcd;
     menu_check(MI_LCDCOL, g_opt.lcd_color); menu_enable(MI_LCDCOL, lcd);
@@ -1200,6 +1247,7 @@ static void menu_sync(void) {
     menu_check(MI_SWAP, g_swap && !wide); menu_enable(MI_SWAP, !wide);
     for (int i = 0; i < 4; i++) { menu_check(MI_OPACITY1 + i, g_small_opacity == 100 - 25 * i); menu_enable(MI_OPACITY1 + i, g_gl); }
     menu_check(MI_ANALOG, g_analog_walk);
+    for (int i = 0; i < 5; i++) { menu_check(MI_LANG1 + i, g_fw_language == i + 1); menu_enable(MI_LANG1 + i, rom_is_eur()); }
     for (int i = 0; i < 4; i++) { menu_check(MI_SIZE1 + i, g_scale == i + 1); menu_enable(MI_SIZE1 + i, !g_opt.actual); }
     menu_check(MI_INTEGER, g_opt.integer); menu_enable(MI_INTEGER, !g_opt.actual);
     menu_check(MI_ACTUAL, g_opt.actual); menu_enable(MI_ACTUAL, g_gl);
@@ -1735,6 +1783,15 @@ static void do_action(int id) {
         break;
     case MI_RES_AUTO: if (g_gl && !g_classic) g_res_auto = 1; break;          /* auto_scale() picks it */
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
+    case MI_SMOOTH2D: if (g_gl) { g_smooth2d = !g_smooth2d; gl_set_smooth2d(g_smooth2d); } break;
+    case MI_TEXUP: if (g_gl) { g_texup = !g_texup; gl_set_tex_upscale(g_texup); } break;
+    case MI_TEXPACK: if (g_gl) { g_texpack = !g_texpack; gl_set_texture_pack(g_texpack); } break;
+    case MI_TEXRELOAD: if (g_gl && g_texpack) gl_reload_texture_pack(); break;
+    case MI_TEXDUMP: if (g_gl) { g_texdump = !g_texdump; gl_set_texture_dump(g_texdump); } break;
+    case MI_HDTEXT: if (g_gl) { g_hdtext = !g_hdtext; apply_mode(); } break;
+    case MI_FONT0: case MI_FONT0 + 1: case MI_FONT0 + 2: case MI_FONT0 + 3: case MI_FONT0 + 4: case MI_FONT0 + 5:
+        snprintf(g_hdfont, sizeof g_hdfont, "%s", g_fonts[id - MI_FONT0]); hdtext_set_font(g_hdfont);
+        break;
     case MI_POPOUT:
         if (!g_gl) break;
         if (g_wide && !g_side_by_side) g_wide_pop = !g_wide_pop;
@@ -1792,6 +1849,16 @@ static void do_action(int id) {
 #endif
         break;
     case MI_ANALOG: g_analog_walk = !g_analog_walk; break;
+    case MI_LANG1: case MI_LANG1 + 1: case MI_LANG1 + 2: case MI_LANG1 + 3: case MI_LANG1 + 4: {
+        int lang = id - MI_LANG1 + 1;
+        if (lang == g_fw_language) break;
+        g_fw_language = lang;
+        char text[300];
+        snprintf(text, sizeof text, "The game will be in %s the next time it starts: close it and start it again.\n\n"
+                 "Your adventure log is the same in every language.", LANGUAGE_NAME[lang]);
+        info_box(SDL_MESSAGEBOX_INFORMATION, "Language", text, g_win);
+        break;
+    }
     case MI_MODERN_HELP:
         info_box(SDL_MESSAGEBOX_INFORMATION, "Modern",
             "Optional ways to play that the DS didn't have. Walking with the stick is on at first; the others are off. With them all off the game is exactly the original.\n\n"

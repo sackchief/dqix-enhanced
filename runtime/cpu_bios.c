@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "hdtext.h"
 #include "bios_tables.h"
 #define LZ_COST_DEFAULT 0
 static void bios_cost(Core* k, uint32_t units, uint32_t per);
@@ -295,6 +296,7 @@ static int bios_common(Core* k, uint32_t n) {
             if (w32) { b->w32(d, b->r32(s)); d += 4; if (!fill) s += 4; }
             else { b->w16(d, b->r16(s)); d += 2; if (!fill) s += 2; }
         }
+        if (g_hdtext_any && !fill && k->id == 0) hdtext_copy(c->r[1], c->r[0], cnt * (w32 ? 4u : 2u));
         bios_cost(k, cnt, 6);
         return 1;
     }
@@ -303,6 +305,7 @@ static int bios_common(Core* k, uint32_t n) {
         uint32_t cnt = ((ctl & 0x1FFFFF) + 7) & ~7u;
         int fill = (ctl >> 24) & 1;
         for (uint32_t i = 0; i < cnt; i++) { b->w32(d, b->r32(s)); d += 4; if (!fill) s += 4; }
+        if (g_hdtext_any && !fill && k->id == 0) hdtext_copy(c->r[1], c->r[0], cnt * 4u);
         bios_cost(k, cnt, 2);
         return 1;
     }

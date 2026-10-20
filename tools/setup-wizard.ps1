@@ -16,7 +16,7 @@ $UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DQIX-
 # ---------------------------------------------------------------- checks (no window needed)
 
 # Which ROM is this? Returns @{ Ok; Warn; Text }. Any readable file can be
-# tried: only the USA version is known to work, the others get a warning.
+# tried: the USA and European versions work, the others get a warning.
 function Test-Rom([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @{ Ok = $false; Warn = $false; Text = 'Choose your ROM file (it ends in .nds).' } }
     $code = ''
@@ -26,8 +26,8 @@ function Test-Rom([string]$Path) {
     } catch { return @{ Ok = $false; Warn = $false; Text = "This file can't be read: $($_.Exception.Message)" } }
     switch ($code) {
         'YDQE' { return @{ Ok = $true; Warn = $false; Text = 'Dragon Quest IX (USA).' } }
-        'YDQJ' { return @{ Ok = $true; Warn = $true; Text = "Dragon Quest IX (Japan). Only the USA version is tested: this one may not build or may not run, but you can try." } }
-        'YDQP' { return @{ Ok = $true; Warn = $true; Text = "Dragon Quest IX (Europe). Only the USA version is tested: this one may not build or may not run, but you can try." } }
+        'YDQP' { return @{ Ok = $true; Warn = $false; Text = 'Dragon Quest IX (Europe). English, French, German, Italian or Spanish: choose in the Language menu.' } }
+        'YDQJ' { return @{ Ok = $true; Warn = $true; Text = "Dragon Quest IX (Japan). Only the USA and European versions are supported: this one may not build or may not run, but you can try." } }
         default { return @{ Ok = $true; Warn = $true; Text = "This doesn't look like a Dragon Quest IX ROM (game code '$code'). It will most likely not build, but you can try." } }
     }
 }
@@ -233,7 +233,7 @@ function Show-Welcome {
     $title.Text = "Welcome to $AppName for PC"
     $subtitle.Text = 'This setup turns your own copy of the game into a PC game.'
     [void](New-Label ("You'll need:`n" +
-        "  - a copy (ROM, a .nds file) of your own Dragon Quest IX cartridge (the USA version is the tested one)`n" +
+        "  - a copy (ROM, a .nds file) of your own Dragon Quest IX cartridge (the USA or European version)`n" +
         "  - an internet connection, and about 4 GB of free space`n" +
         "  - 10 to 20 minutes the first time (the build tools are installed once)") 0 (S 100))
     [void](New-Label ("What happens: you choose your ROM and where to put the game, then setup downloads free build " +
