@@ -57,6 +57,9 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     sep(res);
     item(res, MI_RES_AUTO, L"&Auto: as sharp as your screen (up to 12x)");
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
+    HMENU wst = sub(gfx, L"&Window style (Enhanced)");
+    item(wst, MI_WINSTYLE0, L"Like the &DS");
+    item(wst, MI_WINSTYLE0 + 1, L"&Minimal: no frame, more see-through");
 
     HMENU scr = sub(g_bar, L"&Screen");
     item(scr, MI_LCD, L"&DS Lite screen\tF6");
@@ -143,6 +146,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_WIDE_DYN, L"Widescreen, d&ynamic (experimental)");
     item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
+    item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (party along the top, commands bottom left)");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
     HMENU help = sub(g_bar, L"&Help");

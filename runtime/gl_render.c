@@ -218,6 +218,7 @@ static const char* FS_COMP =
     "uniform sampler2D u_col; uniform sampler2D u_c2; uniform usampler2D u_info; uniform sampler2D u_3d;\n"
     "uniform int u_has3d; uniform vec2 u_outsize;\n"
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
+    "uniform int u_cut; uniform vec3 u_tint[8];\n"                                      /* battle HUD, minimal windows: the cards' backdrops left out (gpu2d.c) */
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     "void main() {\n"
     "  vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);\n"                  /* row 0 = top line */
@@ -239,7 +240,13 @@ static const char* FS_COMP =
     "    p2.x = found;\n"
     "  }\n"
     "  vec3 col = texelFetch(u_col, p2, 0).rgb;\n"
-    "  if (u_has3d == 0) { o_color = vec4(col, 1.0); return; }\n"
+    "  if (u_has3d == 0) {\n"
+    /* (premultiplied: the HUD's pieces are see-through there) */
+    "    int k = u_cut != 0 ? int(texelFetch(u_col, p2, 0).a * 255.0 + 0.5) : 0;\n"
+    "    if (k > 2) { o_color = vec4(u_tint[min(k - 3, 7)] * 0.6, 0.6); return; }\n"
+    "    if (k != 0) { o_color = vec4(0.0, 0.0, 0.0, k == 1 ? 0.0 : 0.55); return; }\n"
+    "    o_color = vec4(col, 1.0); return;\n"
+    "  }\n"
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
 
@@ -273,7 +280,7 @@ static const char* FS_COMP =
 static const char* FS_COPY =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
-    "void main() { o_color = vec4(texture(u_src, v_uv).rgb, 1.0); }\n";
+    "void main() { o_color = texture(u_src, v_uv); }\n";
 
 /* Showing the screens in the window: exact pixels, or the DS Lite screen
  * (its LCD colours, pixel grid, backlight), optionally inside a drawn DS Lite.
@@ -550,19 +557,22 @@ static int g_fb_latest = -1, g_fb_shown = -1;                  /* rendered last 
 static int g_fb_w, g_fb_h;                                     /* one DS screen at scale */
 static int g_wside, g_fb3_w;                                   /* widescreen: DS pixels added each side; 3D / final width at scale */
 static int g_wide_shown = -1;                                  /* the screen composed wide last: 0 top, 1 bottom, -1 none */
+static int g_cut;                                               /* gl_set_hud_cut() */
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
+static GLuint held_fbo, held_tex; static int held_w, held_h;   /* gl_hold(): a picture kept for later */
 static int g_ready;
 
 const int* g_gl_scale = &g_scale;
 
 /* ---------------------------------------------------------------- textures */
-typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex; int w, h; uint64_t checked, used; int live; } TexEntry;
+typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex; int w, h; uint64_t checked, used; int live, frame; } TexEntry;   /* frame: a piece of a window's frame (win_frame_tile) */
 #define TEXCACHE 4096
 static TexEntry g_texcache[TEXCACHE];
 static int g_smooth;                                           /* smooth textures (bilinear filtering) */
+extern int g_winstyle;                                         /* window style (gpu2d.c) */
 static uint64_t g_frameno;
 static uint8_t* g_decode;
 
@@ -620,6 +630,21 @@ static void bleed(uint8_t* px, int w, int h) {
     for (size_t i = 0; i < (size_t)w * h; i++) if (px[i * 4 + 3] == 1) px[i * 4 + 3] = 0;
 }
 
+/* A piece of the dialogue window's frame: 4-bit greys, 8 x 8 to 8 x 16 (the
+ * letters beside it are 16 x 16, the speech bubbles' tails cream). */
+static int win_frame_tile(const uint8_t* rgba, int w, int h) {
+    if ((w != 8 && h != 8) || w > 16 || h > 16) return 0;
+    int any = 0;
+    for (int i = 0; i < w * h; i++) {
+        const uint8_t* q = rgba + i * 4;
+        if (!q[3]) continue;
+        if (q[0] != q[1] || q[1] != q[2]) return 0;
+        any = 1;
+    }
+    return any;
+}
+
+static int g_tex_frame;                                        /* texture_for's last texture: TexEntry.frame */
 static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h) {
     TexEntry* e = tex_lookup(ti, pl);
     gpu3d_tex_size(ti, w, h);
@@ -631,12 +656,14 @@ static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h) {
             double t0 = perf_ms();
             e->hash = hs; e->w = *w; e->h = *h;
             gpu3d_decode_texture(ti, pl, g_decode);
+            e->frame = ((ti >> 26) & 7) == 3 && win_frame_tile(g_decode, *w, *h);
             if (g_smooth) bleed(g_decode, *w, *h);
             p_glBindTexture(GL_TEXTURE_2D, e->tex);
             p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w, *h, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_decode);
             g_gl_stats.uploads++; g_gl_stats.upload_texels += *w * *h; g_gl_stats.upload_ms += perf_ms() - t0;
         }
     }
+    g_tex_frame = e->frame;
     return e->tex;
 }
 
@@ -689,6 +716,7 @@ static void free_fbs(void) {
         p_glDeleteTextures(4, t); p_glDeleteFramebuffers(2, b);
     }
     p_glDeleteTextures(1, &final_tex); p_glDeleteFramebuffers(1, &final_fbo);
+    if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); held_tex = held_fbo = 0; held_w = held_h = 0; }
 }
 
 /* The largest 3D resolution this GPU can hold: widescreen up to 512 DS
@@ -882,6 +910,21 @@ static void gl_render_(const Frame3D* f) {
             }
         }
         b.count = nv - b.first;
+        if (g_winstyle && !wire && ((p->attr >> 4) & 3) == 0) {     /* minimal windows (gpu2d.c): the dialogue window, drawn in 3D in front of all */
+            int front = 1, black = 1;
+            float y0 = 192.0f, y1 = 0.0f;
+            for (int k = 0; k < p->n; k++) {
+                if (p->v[k].zn > 1e-4f) front = 0;
+                if (p->v[k].r + p->v[k].g + p->v[k].b > 0.0f) black = 0;
+                y0 = fminf(y0, p->v[k].y); y1 = fmaxf(y1, p->v[k].y);
+            }
+            if (y1 - y0 > 144.0f) black = 0;                        /* (not a fade over the whole screen) */
+            float* o = g_verts + (size_t)b.first * VTX_FLOATS;
+            if (front && !textured && black && b.translucent)       /* its panel: fainter */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) o[7] = (float)(alpha * 3 / 4);
+            else if (front && textured && fmt == 3 && g_tex_frame)  /* its frame: a thin grey edge */
+                for (int k = 0; k < b.count; k++, o += VTX_FLOATS) { o[4] *= 0.4f; o[5] *= 0.4f; o[6] *= 0.4f; }
+        }
         if (nb > 0) {
             Batch* l = &g_batches[nb - 1];
             if (l->tex == b.tex && l->sampler == b.sampler && l->translucent == b.translucent && l->depth_write == b.depth_write &&
@@ -1081,6 +1124,7 @@ const Renderer3D* gl_renderer3d(void) { return &g_gl_renderer; }
 extern uint32_t g_engine_out[2][256 * 192];
 extern uint32_t g_comp_c2[256 * 192];
 extern uint8_t g_comp_info[256 * 192 * 4];
+extern uint32_t g_hud_tint[8];                                  /* gpu2d.c: the battle cards' colours (minimal windows) */
 extern int g_comp_has3d;
 
 static void upload_rgb(GLuint tex, const uint32_t* src) {
@@ -1113,7 +1157,7 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_info"), 2);
     p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_3d"), 3);
     GLint loc_rect = p_glGetUniformLocation(prog_comp, "u_rect"), loc_has3d = p_glGetUniformLocation(prog_comp, "u_has3d");
-    GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide");
+    GLint loc_wide = p_glGetUniformLocation(prog_comp, "u_wide"), loc_cut = p_glGetUniformLocation(prog_comp, "u_cut"), loc_tint = p_glGetUniformLocation(prog_comp, "u_tint");
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
@@ -1125,6 +1169,12 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, tex_info);
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
+        p_glUniform1i(loc_cut, g_cut && !top);                     /* the commands screen (the HUD's pieces) */
+        if (g_cut && !top) {
+            float t[8 * 3];
+            for (int i = 0; i < 8 * 3; i++) t[i] = (float)((g_hud_tint[i / 3] >> (16 - 8 * (i % 3))) & 255) / 255.0f;
+            p_glUniform3fv(loc_tint, 8, t);
+        }
         int wide = eng == 0 && has3d && g_wside > 0;                 /* the 3D screen, widened; the other in the middle */
         p_glUniform1i(loc_wide, wide);
         if (wide) g_wide_shown = top ? 0 : 1;
@@ -1168,12 +1218,73 @@ static GLuint ghost_step(float keep) {
     return ghost_tex[cur];
 }
 
+/* Keep this frame's picture (both screens) to show later: the map window
+ * keeps the last map while a battle shows its commands on that screen. */
+void gl_hold(void) {
+    if (held_w != g_fb3_w || held_h != g_fb_h * 2) {
+        if (held_tex) { p_glDeleteTextures(1, &held_tex); p_glDeleteFramebuffers(1, &held_fbo); }
+        held_tex = new_tex(GL_RGBA8, g_fb3_w, g_fb_h * 2, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        p_glGenFramebuffers(1, &held_fbo);
+        p_glBindFramebuffer(GL_FRAMEBUFFER, held_fbo);
+        p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, held_tex, 0);
+        held_w = g_fb3_w; held_h = g_fb_h * 2;
+    }
+    p_glBindFramebuffer(GL_FRAMEBUFFER, held_fbo);
+    p_glViewport(0, 0, held_w, held_h);
+    p_glDisable(GL_DEPTH_TEST); p_glDisable(GL_BLEND);
+    p_glUseProgram(prog_copy);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, final_tex); p_glBindSampler(0, 0);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_rect"), -1, -1, 2, 2);
+    p_glUniform4f(p_glGetUniformLocation(prog_copy, "u_uv"), 0, 0, 1, 1);
+    p_glBindVertexArray(vao_quad);
+    p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+/* Widescreen battle HUD: parts of a screen (the party's panels, the commands)
+ * drawn over the picture just shown, each where the layout puts it. */
+static void draw_pieces(const GlPresent* v, GLuint src) {
+    float W = (float)(256 + 2 * g_wside);
+    p_glUseProgram(prog_copy);
+    p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, src); p_glBindSampler(0, 0);
+    p_glGenerateMipmap(GL_TEXTURE_2D);                           /* drawn smaller than rendered: averaged, not shimmering */
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    p_glUniform1i(p_glGetUniformLocation(prog_copy, "u_src"), 0);
+    GLint loc_rect = p_glGetUniformLocation(prog_copy, "u_rect"), loc_uv = p_glGetUniformLocation(prog_copy, "u_uv");
+    p_glBindVertexArray(vao_quad);
+    if (g_cut) { p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }   /* premultiplied (gl_compose) */
+    for (int i = 0; i < v->npiece && i < GL_MAX_PIECES; i++) {
+        const float* q = v->piece[i];
+        if (q[2] <= 0 || q[3] <= 0) continue;
+        /* canvas (DS pixels, y down) -> window pixels -> NDC (y up); the rect's origin is its bottom left */
+        float x0 = v->ox + q[0] * v->sc, y1 = v->oy + (q[1] + q[3]) * v->sc;
+        p_glUniform4f(loc_rect, x0 / (float)v->win_w * 2 - 1, 1 - y1 / (float)v->win_h * 2,
+                      q[2] * v->sc / (float)v->win_w * 2, q[3] * v->sc / (float)v->win_h * 2);
+        /* the screen in the composed picture: the top one in the upper half, the DS's 256 columns after the sides */
+        float vtop = q[4] < 0.5f ? 1.0f : 0.5f;
+        p_glUniform4f(loc_uv, ((float)g_wside + q[5]) / W, vtop - (q[6] + q[8]) / 384.0f, q[7] / W, q[8] / 384.0f);
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    p_glDisable(GL_BLEND);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+}
+
 /* Draw the screens (and the console, if chosen) into the window. Call once
  * per emulated frame: the motion blur advances with every call. */
 void gl_present(const GlPresent* v) {
+    if (v->held && !held_tex) {                                   /* nothing kept yet: black */
+        p_glBindFramebuffer(GL_FRAMEBUFFER, 0); p_glViewport(0, 0, v->win_w, v->win_h);
+        p_glClearColor(0, 0, 0, 1); p_glClear(GL_COLOR_BUFFER_BIT);
+        return;
+    }
     int ghost = v->lcd && v->ghost;
-    GLuint src = final_tex;
-    if (ghost && v->again && ghost_cur >= 0) src = ghost_tex[ghost_cur];   /* a second window: this frame's blur as it is */
+    GLuint src = v->held ? held_tex : final_tex;
+    if (v->held) ghost = 0;
+    else if (ghost && v->again && ghost_cur >= 0) src = ghost_tex[ghost_cur];   /* a second window: this frame's blur as it is */
     else if (ghost) src = ghost_step(0.35f);
     else if (!v->again) ghost_cur = -1;
     p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1231,6 +1342,7 @@ void gl_present(const GlPresent* v) {
     p_glUniform4f(p_glGetUniformLocation(P, "u_uv"), 0, 0, 1, 1);
     p_glBindVertexArray(vao_quad);
     p_glDrawArrays(GL_TRIANGLES, 0, 6);
+    if (v->npiece) draw_pieces(v, final_tex);
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */
@@ -1313,3 +1425,4 @@ int gl_read_3d(uint8_t* out, int* w, int* h) {
 /* Widescreen: which screen was composed wide last (0 top, 1 bottom, -1
  * none) and the DS pixels added each side. */
 int gl_wide_shown(int* side) { *side = g_wside; return g_wide_shown; }
+void gl_set_hud_cut(int on) { g_cut = on != 0; }

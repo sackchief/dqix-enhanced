@@ -68,6 +68,9 @@ static int g_small_size = 1;                                      /* ...0 small,
 static int g_small_hide;                                          /* widescreen: no small screen (left trigger / U) */
 static int g_peek;                                                /* widescreen: the other screen big while the swap button is held */
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
+static int g_hud = 1;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
+static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
 static float g_small_alpha = 1.0f;                                /* ...as shown now (solid while the mouse is on it) */
@@ -84,6 +87,7 @@ extern void (*g_report_perf)(FILE* f);
 static void perf_write(FILE* f);
 static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
 extern int g_comp_gl;
+extern int g_winstyle;          /* Enhanced: windows like the DS (0) or minimal (1), gpu2d.c */
 static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
 
 /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
@@ -269,6 +273,36 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
             if (second) { v->cw = 256; v->ch = 192; big[0] = big[1] = big[2] = big[3] = 0; small[0] = small[1] = 0; small[2] = 256; small[3] = 192; }
             else small[0] = small[1] = small[2] = small[3] = 0;
         }
+        if (which == 0 && (g_hud_n > 0 || g_hud_win[2]) && !g_peek && !(g_small_hide && !pop)) {
+            /* Battle HUD: the commands screen cut into its panels, over the 3D,
+             * stacked in the bottom left at half size: the one whose turn it
+             * is (the tall panel, with the commands) on top, the others below
+             * it in the party's order.
+             * The map window keeps the last map (gl_hold() in present_gl). */
+            if (second) {
+                if (pop) { v->held = 1; v->bot[0] = v->bot[1] = v->bot[2] = v->bot[3] = 0; v->top[0] = v->top[1] = 0; v->top[2] = 256; v->top[3] = 192; v->topx[0] = (float)side; v->topx[1] = 256; v->front = 0; }
+            } else {
+                small[0] = small[1] = small[2] = small[3] = 0;
+                if (g_hud_win[2]) {                                   /* a window alone: big, at the top in the middle */
+                    float* q = v->piece[v->npiece++], w = (float)g_hud_win[2], h = (float)g_hud_win[3], kw = fminf(1.0f, fminf(200.0f / w, 110.0f / h));
+                    q[4] = 1; q[5] = (float)g_hud_win[0]; q[6] = (float)g_hud_win[1]; q[7] = w; q[8] = h;
+                    q[2] = w * kw; q[3] = h * kw; q[0] = (v->cw - q[2]) / 2; q[1] = 6;
+                }
+                const float k = 0.5f, gap = 2;
+                float total = 0;
+                for (int i = 0; i < g_hud_n; i++) total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap;
+                float y = 192 - total;
+                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
+                    for (int i = 0; i < g_hud_n && v->npiece < GL_MAX_PIECES; i++) {
+                        float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
+                        if ((h >= 50) == pass) continue;
+                        float* q = v->piece[v->npiece++];
+                        q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
+                        q[0] = 4; q[1] = y; q[2] = 244 * k; q[3] = h * k;
+                        y += q[3] + gap;
+                    }
+            }
+        }
     } else if (two || single) {
         v->cw = 256; v->ch = 192;                                /* one screen; the other is in the other window, or not shown */
     } else if (corner) {
@@ -404,7 +438,9 @@ static void settings_load(void) {
         else if (!strcmp(key, "mute")) g_mute = atoi(val) != 0;
         else if (!strcmp(key, "swap_screens")) g_swap = atoi(val) != 0;
         else if (!strcmp(key, "widescreen_popout")) g_wide_pop = atoi(val) != 0;
+        else if (!strcmp(key, "widescreen_battle_hud")) g_hud = atoi(val) != 0;
         else if (!strcmp(key, "smooth_textures")) g_smooth = atoi(val) != 0;
+        else if (!strcmp(key, "window_style")) { int v = atoi(val); if (v >= 0 && v <= 1) g_winstyle = v; }
         else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
         else if (!strcmp(key, "second_window")) { int r[4]; if (sscanf(val, "%d,%d,%d,%d", &r[0], &r[1], &r[2], &r[3]) == 4 && r[2] > 0 && r[3] > 0) memcpy(g_win2_rect, r, sizeof r); }
         else if (!strcmp(key, "second_window_fullscreen")) g_win2_full = atoi(val) != 0;
@@ -453,8 +489,12 @@ static void settings_save(void) {
     fprintf(f, "resolution_3d = %d\n", g_res_auto || g_scale3d > 4 ? 4 : g_scale3d);   /* for versions before v29 */
     fprintf(f, "# enhanced: smooth textures (filtered) instead of the DS's blocky texels: 0 or 1\n");
     fprintf(f, "smooth_textures = %d\n", g_smooth);
+    fprintf(f, "# enhanced: menu and dialogue windows: 0 like the DS, 1 minimal (no frame, more see-through)\n");
+    fprintf(f, "window_style = %d\n", g_winstyle);
     fprintf(f, "# widescreen: the small screen (map, battle commands) in a window of its own: 0 or 1\n");
     fprintf(f, "widescreen_popout = %d\n", g_wide_pop);
+    fprintf(f, "# widescreen battles: the party's panels along the top and the commands in the bottom left, over the 3D: 0 or 1\n");
+    fprintf(f, "widescreen_battle_hud = %d\n", g_hud);
     fprintf(f, "# window size: 1 to 8 times the DS screens (F3)\n");
     fprintf(f, "window_scale = %d\n", g_scale);
     fprintf(f, "# stacked, side_by_side, corner (the top screen small beside the field), wide (widescreen),\n");
@@ -608,6 +648,7 @@ static int try_gl(void) {
     const char* e = getenv("DQIX_SCALE3D");
     if (e) { g_scale3d = atoi(e); g_res_auto = 0; }
     if (getenv("DQIX_SMOOTH")) g_smooth = atoi(getenv("DQIX_SMOOTH")) != 0;   /* tests */
+    if (getenv("DQIX_WINDOW_STYLE")) g_winstyle = atoi(getenv("DQIX_WINDOW_STYLE")) == 1;
     gl_set_smooth(g_smooth);
     if (!gl_render_init(g_res_auto ? (getenv("DQIX_AUTO_FROM") ? 2 : 4) : g_scale3d)) {
         fprintf(stderr, "OpenGL renderer failed to start: using the software renderer\n");
@@ -814,6 +855,22 @@ static int to_touch_in(SDL_Window* win, int wx, int wy, int* tx, int* ty, int cl
         canvas_layout_for(&v, ww, wh, win == g_win2);
         lx = ((float)wx + 0.5f - v.ox) / v.sc; ly = ((float)wy + 0.5f - v.oy) / v.sc;
     } else { canvas_layout(&v, 1, 1); SDL_RenderWindowToLogical(g_ren, wx, wy, &lx, &ly); }
+    if (v.npiece) {                                               /* the battle HUD's panels: back to where they are on the touch screen */
+        static int last;                                          /* the panel last touched: a drag off it stays on its edge */
+        int hit = -1;
+        for (int i = v.npiece - 1; i >= 0 && hit < 0; i--) {
+            const float* q = v.piece[i];
+            if (lx >= q[0] && lx < q[0] + q[2] && ly >= q[1] && ly < q[1] + q[3]) hit = i;
+        }
+        if (hit < 0 && !(clamp && last < v.npiece)) return 0;   /* the rest of the commands screen isn't shown */
+        if (hit >= 0) last = hit;
+        const float* q = v.piece[last];
+        float px = fminf(fmaxf(lx, q[0]), q[0] + q[2] - 0.01f), py = fminf(fmaxf(ly, q[1]), q[1] + q[3] - 0.01f);
+        int x = (int)floorf(q[5] + (px - q[0]) * q[7] / q[2]), y = (int)floorf(q[6] + (py - q[1]) * q[8] / q[3]);
+        if (x < 0 || x > 255 || y < 0 || y > 191) return 0;
+        *tx = x; *ty = y;
+        return 1;
+    }
     if (v.front == 0 && v.top[2] < 256 && lx >= v.top[0] && lx < v.top[0] + v.top[2] && ly >= v.top[1] && ly < v.top[1] + v.top[3])
         return 0;                                                 /* on the small top screen in front of it */
     int side = 0; if (g_gl) gl_wide_shown(&side);
@@ -1021,6 +1078,54 @@ static void wide_update(int a_on_top) {
     else if (g_wide_mix > target) g_wide_mix = fmaxf(target, g_wide_mix - step);
 }
 
+/* Widescreen battles (3D on the top screen): find the party's panels on the
+ * commands screen. They are stacked across it, each framed in white with a
+ * grey line (0x515151) between them; the one whose turn it is is taller and
+ * holds the commands. Anything else there (no such lines) keeps the usual
+ * small screen. In the field, keep the map for the map window. */
+static void hud_update(int a_on_top) {
+    g_hud_n = 0; g_hud_win[2] = 0;
+    if (!g_gl || !g_hud || !g_wide || g_side_by_side || (g_two && !g_single)) return;
+    int side = 0, which = gl_wide_shown(&side);
+    if (which == 1 && g_wide_pop) {                               /* the field: the map the window keeps during battles */
+        uint16_t mb; memcpy(&mb, &g_io[(a_on_top ? 0 : 0x1000) + 0x6C], 2);   /* the top screen's engine (the map) */
+        static unsigned n;                                        /* a copy of the whole picture: a few times a second is enough */
+        if (n++ % 10 == 0 && !g_small_blank && (!(mb >> 14) || !(mb & 0x1F))) gl_hold();   /* not while it fades out (into a battle) */
+        return;
+    }
+    if (which != 0) return;
+    const uint32_t* px = g_engine_out[a_on_top ? 1 : 0];          /* the bottom screen's engine */
+    int sep[192], nsep = 0;
+    for (int y = 0; y < 192; y++) {
+        int n = 0;
+        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == 0x515151) n++;
+        sep[y] = n > 200; nsep += sep[y];
+    }
+    if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
+        int x0 = 256, y0 = 192, x1 = -1, y1 = -1, n = 0;              /* its inside: dark grey 0x303030, in both styles */
+        for (int y = 0; y < 192; y++)
+            for (int x = 0; x < 256; x++)
+                if ((px[y * 256 + x] & 0xFFFFFF) == 0x303030) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 - x0 < 100 || y1 - y0 < 40 || n * 10 < (x1 - x0 + 1) * (y1 - y0 + 1) * 7) return;   /* (mostly that grey: one window) */
+        x0 = x0 < 3 ? 0 : x0 - 3; y0 = y0 < 3 ? 0 : y0 - 3; x1 = x1 > 252 ? 255 : x1 + 3; y1 = y1 > 188 ? 191 : y1 + 3;   /* its frame */
+        g_hud_win[0] = x0; g_hud_win[1] = y0; g_hud_win[2] = x1 - x0 + 1; g_hud_win[3] = y1 - y0 + 1;
+        return;
+    }
+    int n = 0, tall = 0;
+    for (int y = 0; y < 192;) {
+        if (sep[y]) { y++; continue; }
+        int y0 = y;
+        while (y < 192 && !sep[y]) y++;
+        if (y - y0 < 8) continue;                                 /* a border, not a panel */
+        /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
+        int h = y - y0, mid = (y0 + y) / 2, framed = 0;
+        for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == 0xFBFBFB) framed = 1;
+        if (n == 8 || h < 30 || h > 80 || !framed || (h >= 50 && tall++)) return;
+        g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
+    }
+    if (n >= 2) g_hud_n = n;
+}
+
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
  * least 2x, at most what the GPU holds), so it is never stretched and the
  * extra detail smooths the edges. Changes after the size has stayed the same
@@ -1061,6 +1166,8 @@ static void present_gl(void) {
         if (lg && g_frame % 60 == 0) g_box_tests = g_box_in = g_box_widened = 0;
     }
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
+    hud_update((pow >> 15) & 1);                                 /* (before composing: the minimal style cuts the cards out for it) */
+    gl_set_hud_cut(g_winstyle && (g_hud_n > 0 || g_hud_win[2]));
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     gl_dump_hook();
@@ -1177,7 +1284,9 @@ static void menu_sync(void) {
         for (int i = 0; i < 7; i++) { menu_check(ids[i], sc[i] ? !g_res_auto && g_scale3d == sc[i] : g_res_auto); menu_enable(ids[i], g_gl && !g_classic); }
     }
     menu_check(MI_POPOUT, g_wide_pop && wide); menu_enable(MI_POPOUT, g_gl);
+    menu_check(MI_HUD, g_hud && wide); menu_enable(MI_HUD, g_gl);
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
+    for (int i = 0; i < 2; i++) { menu_check(MI_WINSTYLE0 + i, g_winstyle == i); menu_enable(MI_WINSTYLE0 + i, g_gl && !g_classic); }
     menu_check(MI_LCD, g_opt.lcd); menu_enable(MI_LCD, g_gl);
     int lcd = g_gl && g_opt.lcd;
     menu_check(MI_LCDCOL, g_opt.lcd_color); menu_enable(MI_LCDCOL, lcd);
@@ -1735,12 +1844,14 @@ static void do_action(int id) {
         break;
     case MI_RES_AUTO: if (g_gl && !g_classic) g_res_auto = 1; break;          /* auto_scale() picks it */
     case MI_SMOOTH: if (g_gl) { g_smooth = !g_smooth; gl_set_smooth(g_smooth); } break;
+    case MI_WINSTYLE0: case MI_WINSTYLE0 + 1: if (g_gl) g_winstyle = id - MI_WINSTYLE0; break;
     case MI_POPOUT:
         if (!g_gl) break;
         if (g_wide && !g_side_by_side) g_wide_pop = !g_wide_pop;
         else { g_wide_pop = 1; g_wide = 1; g_corner = g_side_by_side = g_two = 0; }   /* turns widescreen on too */
         relayout = 1;
         break;
+    case MI_HUD: g_hud = !g_hud; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
