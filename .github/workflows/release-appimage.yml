@@ -1,0 +1,150 @@
+name: Publish Linux AppImage
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful run ID of “Linux CI + AppImage”
+        required: true
+        type: string
+      tag_name:
+        description: New release tag, for example linux-appimage-v31
+        required: true
+        type: string
+      release_name:
+        description: Name shown on the GitHub Release
+        required: true
+        default: DQIX Enhanced Linux Builder
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Publish a previously built artifact
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source for release metadata
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate the source CI run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "source_run_id must be a numeric GitHub Actions run ID" >&2
+            exit 1
+          fi
+
+          RUN_JSON="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --json workflowName,headBranch,headSha,status,conclusion,event)"
+          WORKFLOW_NAME="$(jq -r '.workflowName // empty' <<< "$RUN_JSON")"
+          HEAD_BRANCH="$(jq -r '.headBranch // empty' <<< "$RUN_JSON")"
+          HEAD_SHA="$(jq -r '.headSha // empty' <<< "$RUN_JSON")"
+          STATUS="$(jq -r '.status // empty' <<< "$RUN_JSON")"
+          CONCLUSION="$(jq -r '.conclusion // empty' <<< "$RUN_JSON")"
+          EVENT="$(jq -r '.event // empty' <<< "$RUN_JSON")"
+
+          [ "$WORKFLOW_NAME" = "Linux CI + AppImage" ] || {
+            echo "The selected run is not the Linux CI + AppImage workflow" >&2
+            exit 1
+          }
+          [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "success" ] || {
+            echo "The selected workflow run has not completed successfully" >&2
+            exit 1
+          }
+          case "$HEAD_BRANCH" in
+            main|stable) ;;
+            *) echo "Release artifacts must come from main or stable (got $HEAD_BRANCH)" >&2; exit 1 ;;
+          esac
+          case "$EVENT" in
+            push|workflow_dispatch) ;;
+            *) echo "Refusing to publish an artifact built by event '$EVENT'" >&2; exit 1 ;;
+          esac
+          [ -n "$HEAD_SHA" ] || { echo "Source commit SHA is missing" >&2; exit 1; }
+
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "Validated artifact source: $HEAD_BRANCH @ $HEAD_SHA"
+
+      - name: Download CI AppImage artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name dqix-enhanced-appimage \
+            --dir "$RUNNER_TEMP/release-assets"
+
+      - name: Verify files and checksums
+        env:
+          ASSETS_DIR: ${{ runner.temp }}/release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$ASSETS_DIR/DQIX-Enhanced-Builder-x86_64.AppImage"
+          [ -f "$IMAGE" ] || { echo "AppImage artifact is missing" >&2; exit 1; }
+          chmod +x "$IMAGE"
+          [ -x "$IMAGE" ] || { echo "AppImage could not be marked executable" >&2; exit 1; }
+          [ -f "$ASSETS_DIR/SHA256SUMS" ] || { echo "SHA256SUMS is missing" >&2; exit 1; }
+          [ -f "$ASSETS_DIR/build-info.txt" ] || { echo "build-info.txt is missing" >&2; exit 1; }
+          (cd "$ASSETS_DIR" && sha256sum --check SHA256SUMS)
+          if find "$ASSETS_DIR" -type f \( -name '*.nds' -o -name '*.sav' \) -print -quit | grep -q .; then
+            echo "Refusing to publish an artifact containing a ROM or save file" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag_name }}
+          RELEASE_NAME: ${{ inputs.release_name }}
+          HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+          ASSETS_DIR: ${{ runner.temp }}/release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "tag_name may contain only letters, numbers, dot, underscore and hyphen" >&2
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG_NAME. Choose a new tag; releases are not overwritten." >&2
+            exit 1
+          fi
+
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          ## DQIX Enhanced Linux Builder
+
+          This AppImage contains the public build sources and a bundled, version-constrained Linux toolchain. It does **not** contain a ROM or a prebuilt game.
+
+          First build from a terminal:
+
+              chmod +x DQIX-Enhanced-Builder-x86_64.AppImage
+              ./DQIX-Enhanced-Builder-x86_64.AppImage /absolute/path/to/your-own-ROM.nds
+
+          The resulting game and copied ROM remain in the local user workspace. Do not publish or share that workspace.
+
+          Built from commit: $HEAD_SHA
+
+          Verify the download with SHA256SUMS.
+          EOF
+
+          gh release create "$TAG_NAME" \
+            "$ASSETS_DIR/DQIX-Enhanced-Builder-x86_64.AppImage" \
+            "$ASSETS_DIR/SHA256SUMS" \
+            "$ASSETS_DIR/build-info.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_NAME" \
+            --target "$HEAD_SHA" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

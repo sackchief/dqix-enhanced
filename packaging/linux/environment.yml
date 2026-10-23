@@ -1,0 +1,16 @@
+name: dqix-builder
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11.11
+  - pyyaml=6.0.2
+  - tk=8.6.13
+  - make=4.4.1
+  - gcc_linux-64=12.3.0
+  - sysroot_linux-64=2.17
+  - sdl2=2.32.56
+  - pkg-config=0.29.2
+  - curl=8.11.1
+  - conda-pack=0.8.1
+  # conda-pack 0.8.1 imports pkg_resources, removed by setuptools 81+.
+  - setuptools=80.9.0

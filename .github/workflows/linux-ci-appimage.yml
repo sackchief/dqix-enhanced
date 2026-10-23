@@ -1,0 +1,196 @@
+name: Linux CI + AppImage
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+    branches: [main, stable]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-appimage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Source and recompiler tests (no ROM)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential clang lld llvm
+          clang --version
+          python -m pip install --disable-pip-version-check "PyYAML==6.0.2"
+
+      - name: Check Python and shell syntax
+        run: |
+          python -m compileall -q recomp tools tests
+          bash -n packaging/linux/AppRun
+          for script in tools/build-game.sh tools/where.sh build-windows.sh; do
+            sh -n "$script"
+          done
+
+      - name: Run recompiler semantic tests
+        run: python tests/semantics/run.py 2000
+
+  appimage:
+    name: Package and smoke-test builder AppImage
+    needs: tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install AppImage packaging utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libfuse2 rsync squashfs-tools
+
+      - name: Set up pinned build environment (cached)
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: packaging/linux/environment.yml
+          create-args: --strict-channel-priority
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Pack the relocatable build toolchain
+        shell: bash -el {0}
+        run: |
+          test -n "$CONDA_PREFIX"
+          conda-pack -p "$CONDA_PREFIX" --format tar.gz -o "$RUNNER_TEMP/toolchain.tar.gz"
+          tar -tzf "$RUNNER_TEMP/toolchain.tar.gz" >/dev/null
+
+      - name: Restore or download pinned appimagetool
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/appimagetool
+          key: appimagetool-x86_64-95cbe7cce9717fce90c484e34052ee7c7f1d7635b33c12525b4776826a7d29b6
+
+      - name: Verify appimagetool checksum
+        env:
+          APPIMAGETOOL_SHA256: 95cbe7cce9717fce90c484e34052ee7c7f1d7635b33c12525b4776826a7d29b6
+        run: |
+          mkdir -p "$HOME/.cache/appimagetool"
+          TOOL="$HOME/.cache/appimagetool/appimagetool-x86_64.AppImage"
+          if [ ! -f "$TOOL" ]; then
+            curl --fail --location --retry 3 \
+              https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+              --output "$TOOL"
+          fi
+          printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$TOOL" | sha256sum --check -
+          chmod +x "$TOOL"
+          echo "APPIMAGETOOL=$TOOL" >> "$GITHUB_ENV"
+
+      - name: Assemble AppDir (no ROM or generated game)
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          APPDIR="$RUNNER_TEMP/DQIX-Enhanced.AppDir"
+          PACKAGE_DIR="$APPDIR/usr/share/dqix-enhanced"
+          rm -rf "$APPDIR" dist
+          mkdir -p "$PACKAGE_DIR/source" \
+            "$APPDIR/usr/share/icons/hicolor/scalable/apps" dist
+
+          rsync -a --delete \
+            --exclude='/.git/' \
+            --exclude='/.github/' \
+            --exclude='/tests/' \
+            --exclude='/build/' \
+            --exclude='/game/' \
+            --exclude='/rom/' \
+            --exclude='/extract/' \
+            --exclude='/obj/' \
+            --exclude='/gen/' \
+            --exclude='/gen7/' \
+            --exclude='/release/' \
+            --exclude='/wfc/' \
+            --exclude='*.nds' \
+            --exclude='*.sav' \
+            --exclude='*.o' \
+            --exclude='*.exe' \
+            --exclude='*.dll' \
+            --exclude='*.so' \
+            --exclude='*.ppm' \
+            --exclude='*.bmp' \
+            --exclude='*.wav' \
+            --exclude='*.pyc' \
+            --exclude='__pycache__/' \
+            --exclude='reports/' \
+            ./ "$PACKAGE_DIR/source/"
+
+          cp packaging/linux/AppRun "$APPDIR/AppRun"
+          chmod 0755 "$APPDIR/AppRun"
+          cp packaging/linux/dqix-enhanced-builder.desktop "$APPDIR/dqix-enhanced-builder.desktop"
+          cp packaging/linux/dqix-enhanced-builder.svg "$APPDIR/dqix-enhanced-builder.svg"
+          cp packaging/linux/dqix-enhanced-builder.svg \
+            "$APPDIR/usr/share/icons/hicolor/scalable/apps/dqix-enhanced-builder.svg"
+          cp "$RUNNER_TEMP/toolchain.tar.gz" "$PACKAGE_DIR/toolchain.tar.gz"
+
+          VERSION="$(awk -F '"' '/DQIX_VERSION / {print $2; exit}' runtime/version.h)"
+          test -n "$VERSION"
+          printf '%s\n' "$VERSION" > "$PACKAGE_DIR/APP_VERSION"
+          sha256sum "$PACKAGE_DIR/toolchain.tar.gz" | awk '{print $1}' > "$PACKAGE_DIR/toolchain.sha256"
+
+          # Do not bundle user data or generated game code. The AppImage is a
+          # portable builder and creates the game locally from the user's ROM.
+          if find "$PACKAGE_DIR/source" -type f \( -name '*.nds' -o -name '*.sav' -o -name '*.o' -o -name '*.so' -o -name '*.exe' \) -print -quit | grep -q .; then
+            echo "Unexpected ROM/save/generated binary in AppDir source tree" >&2
+            exit 1
+          fi
+
+          echo "Project version: $VERSION" > dist/build-info.txt
+          echo "Source commit: $GITHUB_SHA" >> dist/build-info.txt
+          echo "Target: Linux x86_64; build host: Ubuntu 22.04" >> dist/build-info.txt
+          echo "Toolchain: packaging/linux/environment.yml, packed with conda-pack" >> dist/build-info.txt
+          echo "ROM and prebuilt game: not included; build occurs on the user's machine" >> dist/build-info.txt
+          echo "AppImage tool commit: 854e19e951900cf141245b384d45735942521abe" >> dist/build-info.txt
+
+      - name: Build AppImage
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+            "$APPIMAGETOOL" "$RUNNER_TEMP/DQIX-Enhanced.AppDir" \
+            "$GITHUB_WORKSPACE/dist/DQIX-Enhanced-Builder-x86_64.AppImage"
+          chmod +x dist/DQIX-Enhanced-Builder-x86_64.AppImage
+
+      - name: Smoke-test bundled toolchain
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          HOME: ${{ runner.temp }}/appimage-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/appimage-cache
+          XDG_DATA_HOME: ${{ runner.temp }}/appimage-data
+        run: |
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
+          ./dist/DQIX-Enhanced-Builder-x86_64.AppImage --self-test
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum DQIX-Enhanced-Builder-x86_64.AppImage build-info.txt > SHA256SUMS
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dqix-enhanced-appimage
+          path: |
+            dist/DQIX-Enhanced-Builder-x86_64.AppImage
+            dist/SHA256SUMS
+            dist/build-info.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

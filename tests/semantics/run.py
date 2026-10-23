@@ -35,6 +35,7 @@ HARNESS_HEAD = r"""
 
 #define RAM_SIZE (8u << 20)
 static uint8_t ram[RAM_SIZE];
+uint32_t g_cyc;  /* generated recompiler code increments its cycle counter */
 static uint8_t* P(uint32_t a) {
     uint32_t o = a - 0x02000000u;
     if (o >= RAM_SIZE) { fprintf(stderr, "bad address %08x\n", a); exit(3); }
