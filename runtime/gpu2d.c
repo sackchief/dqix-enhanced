@@ -7,6 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "text_hd.h"
+#include <stdio.h>
+#ifdef DQIX_PIXDBG
+/* DQIX_LAYERDUMP: per engine, layer (BG0-3, OBJ), pixel: g_vram offset of its 4-bit tile
+ * (+1, 0 none), tile pixel (py * 8 + px), colour index, palette base, flags (1 tagged, 2 flipped) */
+typedef struct { uint32_t tile; uint8_t tp, idx, flags, pad; uint16_t pal; uint16_t rgb; } LDump;
+LDump g_ldump[2][5][256 * 192];
+int g_ldump_on = -1;
+#endif
 
 uint32_t g_screen[2][256 * 192];
 uint32_t g_engine_out[2][256 * 192];
@@ -69,9 +78,30 @@ static inline uint16_t ext16(const uint8_t* p, uint32_t idx) { uint16_t v = 0; i
 
 /* ---------------------------------------------------------------- line buffers */
 #define PX_OPAQUE 0x10000u
-typedef struct { uint32_t col[256]; } BgLine;                        /* raw 16-bit colour | PX_OPAQUE */
+typedef struct {
+    uint32_t col[256];                                                  /* raw 16-bit colour | PX_OPAQUE */
+    const TxTag* tag[256];                                              /* HD text: the letter this pixel belongs to */
+    uint32_t ucol[256];                                                 /* ... and the colour under it (col's format) */
+    int tagged;                                                         /* some pixel on this line has a tag */
+} BgLine;
 /* flag: 0x10 normal sprite, 0x80 semi-transparent, 0xC0 | (alpha + 1) bitmap sprite */
-typedef struct { uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256]; } ObjLine;
+typedef struct {
+    uint32_t col[256]; uint8_t prio[256]; uint8_t flag[256]; uint8_t win[256]; uint8_t mos[256];
+    const TxTag* tag[256]; uint32_t ucol[256]; int tagged;              /* HD text, as in BgLine */
+    uint32_t col2[256];                                                 /* HD text: the sprite pixel under the one shown (0: none) */
+} ObjLine;
+
+/* HD text: lines with letters this frame, and the ones near those last frame */
+uint8_t g_tx_line_now[2][192], g_tx_line_near[2][192];
+
+/* HD text: a label pixel's kind (row bits): 0 its letters' own colour, 0x80 its
+ * outline (the outline colour, or any other when none is named), 0x40 other
+ * shades (a gradient: neither) */
+static inline int tx_label_rowbits(const TxLabel* Lb, int idx) {
+    if (idx == Lb->main) return 0;
+    int o = Lb->flags >> 4;
+    return !o || idx == o ? 0x80 : 0x40;
+}
 
 static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     uint32_t disp = R32(e, 0);
@@ -90,6 +120,7 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
     }
     uint32_t yy = (y + vofs) & (h - 1);
     uint32_t ty = yy >> 3;
+    out->tagged = 0;
     for (int x = 0; x < 256;) {
         uint32_t xx = (x + hofs) & (w - 1);
         uint32_t tx = xx >> 3;
@@ -102,12 +133,48 @@ static void render_text_bg(Engine* e, int eng, int bg, int y, BgLine* out) {
         /* one tile row: 8 (or 4) bytes, contiguous within a 16 KB VRAM page */
         const uint8_t* row = c256 ? vram_ptr(charbase + tile * 64 + py * 8) : vram_ptr(charbase + tile * 32 + py * 4);
         uint32_t palbase = c256 ? 0 : (ent >> 12) * 16;
+        TxTag* rowtags = (g_tx_active && !c256 && row) ? tx_vram_tags(row) : NULL;   /* HD text (4-bit tiles) */
+        /* HD text: a label the game has as a picture ("Back", "Lv"): its letters get tags made here */
+        static TxTag synth[4][256];
+        int lab = -1, ldx = 0, ldy = 0; TxInst* lin = NULL;
+        if (g_tx_active && g_tx_nlabels && !c256 && row && !flip && !(ent & 0x800)) {
+            const uint8_t* tp = vram_ptr(charbase + tile * 32);
+            if (tp) lin = tx_label_at(tp, eng, x - (int)(xx & 7), y - (int)(yy & 7), &ldx, &ldy);
+            if (lin) lab = lin->index;
+        }
         for (uint32_t px0 = xx & 7; px0 < 8 && x < 256; px0++, x++) {
             uint32_t px = flip ? 7 - px0 : px0;
             uint32_t idx;
             if (!row) idx = 0;
             else if (c256) idx = row[px];
             else idx = (row[px >> 1] >> ((px & 1) * 4)) & 15;
+#ifdef DQIX_PIXDBG
+            { static int px_x = -2, px_y; if (px_x == -2) { const char* s = getenv("DQIX_PIX"); px_x = -1; if (s) sscanf(s, "%d,%d", &px_x, &px_y); }
+              if (x == px_x && y == px_y) fprintf(stderr, "[f%llu] PIX eng%d bg%d x%d y%d tileaddr %08x (c256 %d) ent %04x idx %u charbase %08x mapbase %08x hofs %u vofs %u\n", (unsigned long long)g_frame, eng, bg, x, y, c256 ? charbase + tile * 64 + py * 8 + px : charbase + tile * 32 + py * 4 + (px >> 1), c256, ent, idx, charbase, mapbase, hofs, vofs);
+                if (x == px_x && y == px_y && !c256) { const uint8_t* tp = vram_ptr(charbase + tile * 32); fprintf(stderr, "  tile %03x:", tile); for (int k = 0; k < 32 && tp; k++) fprintf(stderr, "%02x", tp[k]); fprintf(stderr, "\n"); } }
+#endif
+            out->tag[x] = NULL;
+            if (lin && idx && (g_tx_labels[lab].inkmask >> idx & 1) && (unsigned)(ldx + (int)px) < g_tx_labels[lab].w && (unsigned)(ldy + (int)py) < g_tx_labels[lab].h) {
+                TxTag* t = &synth[bg][x];
+                const TxLabel* Lb = &g_tx_labels[lab];
+                t->inst = tx_inst_index(lin) + 1; t->gen = lin->gen; t->col = (uint8_t)(ldx + px);
+                t->row = (uint8_t)((ldy + py) | tx_label_rowbits(Lb, idx));   /* 0x80: an outline pixel (not the letters' colour) */
+                t->under = Lb->rowbg[(ldy + py) < 24 ? ldy + py : 23];   /* what is behind the letters on that row */
+                out->tag[x] = t; out->tagged = 1;
+                out->ucol[x] = t->under ? pal16(e->pal + (palbase + t->under) * 2) | PX_OPAQUE : 0;
+            } else if (rowtags && idx) {                             /* (a letter's pixel is never transparent) */
+                const TxTag* t = &rowtags[(px >> 1) * 2 + (px & 1)];
+                if (t->inst && tx_inst_of(t)) {
+                    out->tag[x] = t; out->tagged = 1;
+                    out->ucol[x] = t->under ? pal16(e->pal + (palbase + t->under) * 2) | PX_OPAQUE : 0;
+                }
+            }
+#ifdef DQIX_PIXDBG
+            if (g_ldump_on < 0) g_ldump_on = getenv("DQIX_LAYERDUMP") != NULL;
+            if (g_ldump_on && !c256 && row) { LDump* d = &g_ldump[eng][bg][y * 256 + x]; const uint8_t* tp = vram_ptr(charbase + tile * 32);
+                d->tile = tp ? (uint32_t)(tp - g_vram) + 1 : 0; d->tp = (uint8_t)(py * 8 + px); d->idx = (uint8_t)idx; d->pal = (uint16_t)palbase;
+                d->flags = (uint8_t)((out->tag[x] ? 1 : 0) | (flip || (ent & 0x800) ? 2 : 0)); d->rgb = pal16(e->pal + (palbase + idx) * 2); }
+#endif
             if (!idx) { out->col[x] = 0; continue; }
             uint16_t col;
             if (c256) col = ext ? ext16(ext, (ent >> 12) * 256 + idx) : pal16(e->pal + idx * 2);
@@ -139,6 +206,7 @@ static void render_affine_bg(Engine* e, int eng, int bg, int kind, BgLine* out) 
     const uint8_t* ext = NULL;
     if (kind == 2 && !bitmap && (disp & 0x40000000)) ext = ext_bg_pal(eng, bg);
     uint32_t bmbase = e->bgvram + ((cnt >> 8) & 31) * 0x4000;
+    out->tagged = 0;
     for (int x = 0; x < 256; x++, rx += pa, ry += pc) {
         int32_t tx = rx >> 8, ty = ry >> 8;
         if (wrap) { tx &= (int32_t)w - 1; ty &= (int32_t)h - 1; }
@@ -182,6 +250,11 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
     memset(out->flag, 0, sizeof out->flag);
     memset(out->mos, 0, sizeof out->mos);
     memset(out->win, 0, sizeof out->win);
+    memset(out->col2, 0, sizeof out->col2);
+    out->tagged = 0;
+#ifdef DQIX_PIXDBG
+    if (g_ldump_on > 0) memset(&g_ldump[eng][4][y * 256], 0, sizeof(LDump) * 256);
+#endif
     for (int i = 0; i < 128; i++) {
         uint16_t a0, a1, a2;
         memcpy(&a0, oam + i * 8, 2); memcpy(&a1, oam + i * 8 + 2, 2); memcpy(&a2, oam + i * 8 + 4, 2);
@@ -227,6 +300,7 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
             }
             uint16_t col;
             int opaque;
+            const TxTag* tag = NULL; uint32_t ucol = 0;
             if (mode == 3) {                                        /* bitmap sprite */
                 uint32_t addr;
                 if (disp & 0x40) addr = e->objvram + tile * (128u << ((disp >> 22) & 1)) + (ty * w + tx) * 2;
@@ -250,17 +324,63 @@ static void render_objs(Engine* e, int eng, int y, ObjLine* out) {
                 opaque = idx != 0;
                 if (c256) col = ext ? ext16(ext, (a2 >> 12) * 256 + idx) : pal16(e->pal + 0x200 + idx * 2);
                 else col = pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + idx) * 2);
+                /* HD text: letters in 4-bit sprites shown as they are (not flipped or rotated) */
+                tag = NULL;
+                if (g_tx_active && g_tx_any && !c256 && !affine && !(a1 & 0x3000) && opaque) {
+                    const uint8_t* bp = vram_ptr(addr + (ty & 7) * 4 + (tx & 7) / 2);
+                    TxTag* tt = bp ? tx_vram_tags(bp) : NULL;
+                    if (tt && tt[tx & 1].inst && tx_inst_of(&tt[tx & 1])) {
+                        tag = &tt[tx & 1];
+                        ucol = tag->under ? pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + tag->under) * 2) | PX_OPAQUE : 0;
+                    }
+                }
+                /* HD text: labels the game has as pictures, in sprites */
+                if (!tag && g_tx_active && g_tx_nlabels && !c256 && !affine && !(a1 & 0x3000) && opaque && mode != 2 && (!(out->col[sx] & PX_OPAQUE) || prio < out->prio[sx])) {
+                    static const uint8_t* last_tp; static TxInst* last_in; static int last_dx, last_dy, last_sx, last_sy; static uint64_t last_frame;
+                    static TxTag osynth[256];
+                    const uint8_t* tp = vram_ptr(addr);
+                    int tsx = ox + (tx & ~7), tsy = oy + (ty & ~7);           /* the tile's screen position */
+                    if (tsy >= 192) tsy -= 256;
+                    if (tp != last_tp || last_frame != g_frame || tsx != last_sx || tsy != last_sy) {
+                        last_tp = tp; last_frame = g_frame; last_sx = tsx; last_sy = tsy;
+                        last_in = tp ? tx_label_at(tp, eng, tsx, tsy, &last_dx, &last_dy) : NULL;
+                    }
+                    const TxLabel* Lb = last_in ? &g_tx_labels[last_in->index] : NULL;
+                    if (Lb && (Lb->inkmask >> idx & 1) && (unsigned)(last_dx + (tx & 7)) < Lb->w && (unsigned)(last_dy + (ty & 7)) < Lb->h) {
+                        TxInst* lin = last_in;
+                        TxTag* t = &osynth[sx];
+                        t->inst = tx_inst_index(lin) + 1; t->gen = lin->gen;
+                        t->col = (uint8_t)(last_dx + (tx & 7)); t->row = (uint8_t)((last_dy + (ty & 7)) | tx_label_rowbits(Lb, idx));
+                        t->under = Lb->rowbg[(last_dy + (ty & 7)) < 24 ? last_dy + (ty & 7) : 23]; tag = t;
+                        ucol = t->under ? pal16(e->pal + 0x200 + ((a2 >> 12) * 16 + t->under) * 2) | PX_OPAQUE : 0;
+                    }
+                }
             }
             if (mode == 2) { if (opaque) out->win[sx] = 1; continue; }
+            if (opaque && mode != 3 && (out->col[sx] & PX_OPAQUE) && prio >= out->prio[sx] && !out->col2[sx]) out->col2[sx] = col | PX_OPAQUE;
             if (!opaque) {                                          /* clear pixel: still carries priority / mosaic */
                 if (!(out->col[sx] & PX_OPAQUE)) { out->prio[sx] = (uint8_t)prio; out->mos[sx] = (uint8_t)mosaic; }
                 continue;
             }
             if (!(out->col[sx] & PX_OPAQUE) || prio < out->prio[sx]) {
+                if (out->col[sx] & PX_OPAQUE) out->col2[sx] = out->col[sx];   /* (HD text: what a letter here covers) */
                 out->col[sx] = col | PX_OPAQUE;
                 out->prio[sx] = (uint8_t)prio;
                 out->flag[sx] = mode == 3 ? (uint8_t)(0xC0 | ((a2 >> 12) + 1)) : mode == 1 ? 0x80 : 0x10;
                 out->mos[sx] = (uint8_t)mosaic;
+                out->tag[sx] = tag; out->ucol[sx] = ucol;
+                if (tag) out->tagged = 1;
+#ifdef DQIX_PIXDBG
+                if (g_ldump_on > 0 && mode != 3 && !c256 && !affine) {
+                    uint32_t base2 = (disp & 0x10) ? e->objvram + tile * (32u << ((disp >> 20) & 3)) : e->objvram + tile * 32;
+                    uint32_t rs = (disp & 0x10) ? (uint32_t)(w / 8) * 32 : 32 * 32;
+                    const uint8_t* tp = vram_ptr(base2 + (ty / 8) * rs + (tx / 8) * 32);
+                    LDump* d = &g_ldump[eng][4][y * 256 + sx];
+                    d->tile = tp ? (uint32_t)(tp - g_vram) + 1 : 0; d->tp = (uint8_t)((ty & 7) * 8 + (tx & 7));
+                    { uint8_t b = vr8(base2 + (ty / 8) * rs + (tx / 8) * 32 + (ty & 7) * 4 + (tx & 7) / 2); d->idx = (tx & 1) ? b >> 4 : b & 15; }
+                    d->pal = (uint16_t)(0x100 + (a2 >> 12) * 16); d->flags = (uint8_t)((tag ? 1 : 0) | ((a1 & 0x3000) ? 2 : 0)); d->rgb = col;
+                }
+#endif
             }
         }
     }
@@ -359,6 +479,13 @@ static uint32_t color_composite(uint32_t v1, uint32_t v2, uint16_t bldcnt, int f
 
 /* GL mode outputs (engine A): see gl_render.c */
 int g_comp_gl;
+/* HD text (text_hd.h) */
+uint32_t g_tx_notext[2][256 * 192];
+
+uint8_t g_tx_vis[2][256 * 192];
+uint32_t g_tx_list[2][TX_LIST_MAX];
+int g_tx_n[2];
+uint16_t g_tx_slot[2][256 * 192][4];
 int g_comp_has3d;
 uint32_t g_comp_c2[256 * 192];
 uint8_t g_comp_info[256 * 192 * 4];
@@ -432,6 +559,7 @@ static void render_engine_line(int eng, int y) {
     uint32_t* dst = &g_engine_out[eng][y * 256];
     uint32_t disp = R32(e, 0);
     if (eng == 0 && y == 0) g_comp_has3d = 0;                       /* set again below if the 3D layer shows */
+    if (y == 0) g_tx_n[eng] = 0;                                    /* HD text: the letters seen this frame */
     if (eng == 0 && g_comp_gl) memset(&g_comp_info[y * 256 * 4], 0, 256 * 4);
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     uint16_t mb = R16(e, 0x6C);
@@ -466,6 +594,35 @@ static void render_engine_line(int eng, int y) {
 /* Compose one line of BG/OBJ layers (6-bit, before master brightness) into
  * line6; when dst is given, also write the displayed pixels (and the GPU
  * renderer's per-pixel info). */
+/* HD text: the instance for a letter pixel whose letter's top left is at (ox, oy):
+ * the same instance can show at several places (copied words), each gets its
+ * own copy, kept from frame to frame while it shows */
+static TxInst* tx_occurrence(TxInst* in, int eng, int ox, int oy) {
+    if (!in || in->seen[eng] != g_frame + 1 || (in->ox[eng] == ox && in->oy[eng] == oy)) return in;
+    enum { N = 8192 };
+    static struct { uint32_t src, c; uint8_t sgen, cgen; int16_t ox, oy; } tab[2][N];
+    uint32_t si = tx_inst_index(in);
+    uint32_t h = (si * 2654435761u ^ (uint32_t)(uint16_t)ox * 40503u ^ (uint32_t)(uint16_t)oy * 9973u) & (N - 1);
+    for (int k = 0; k < 8; k++) {
+        uint32_t j = (h + (uint32_t)k) & (N - 1);
+        if (tab[eng][j].src == si + 1 && tab[eng][j].sgen == in->gen && tab[eng][j].ox == ox && tab[eng][j].oy == oy) {
+            TxInst* c = tx_inst_at(tab[eng][j].c);
+            if (c && c->gen == tab[eng][j].cgen) {
+                if (c->seen[eng] == g_frame + 1) return c;           /* already listed this frame */
+                uint64_t seen0 = c->seen[0], seen1 = c->seen[1]; uint8_t gen = c->gen;
+                *c = *in; c->gen = gen; c->seen[0] = seen0; c->seen[1] = seen1;   /* the copy from before, brought up to date */
+                return c;
+            }
+        }
+    }
+    TxInst* c = tx_inst_clone(in);
+    c->seen[0] = c->seen[1] = 0;
+    uint32_t j = h;
+    for (int k = 0; k < 8; k++) { uint32_t q = (h + (uint32_t)k) & (N - 1); TxInst* o = tx_inst_at(tab[eng][q].c); if (!tab[eng][q].src || !o || o->gen != tab[eng][q].cgen || o->seen[eng] + 4 <= g_frame + 1) { j = q; break; } }
+    tab[eng][j].src = si + 1; tab[eng][j].sgen = in->gen; tab[eng][j].c = tx_inst_index(c); tab[eng][j].cgen = c->gen; tab[eng][j].ox = (int16_t)ox; tab[eng][j].oy = (int16_t)oy;
+    return c;
+}
+
 static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* line6, uint32_t* dst, uint16_t mb) {
 
     int mode = disp & 7;
@@ -488,10 +645,10 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         int mos = (R16(e, 0x08 + bg * 2) & 0x40) != 0;
         if (kind == 0) render_text_bg(e, eng, bg, mos ? e->bg_mos_line : y, &bgl[bg]);
         else render_affine_bg(e, eng, bg, kind, &bgl[bg]);
-        if (mos) bg_mosaic_x(&bgl[bg], R16(e, 0x4C) & 15);
+        if (mos) { bg_mosaic_x(&bgl[bg], R16(e, 0x4C) & 15); bgl[bg].tagged = 0; }
     }
     int obj_on = (disp >> 12) & 1;
-    if (obj_on) { render_objs(e, eng, y, &objl); obj_mosaic_x(&objl, (R16(e, 0x4C) >> 8) & 15); }
+    if (obj_on) { render_objs(e, eng, y, &objl); obj_mosaic_x(&objl, (R16(e, 0x4C) >> 8) & 15); if ((R16(e, 0x4C) >> 8) & 15) objl.tagged = 0; }
     { static int lg = -1; if (lg < 0) lg = getenv("DQIX_MOSAICLOG") != NULL;
       if (lg && R16(e, 0x4C)) { int use = 0; for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && (R16(e, 0x08 + bg * 2) & 0x40)) use = 1;
           static uint64_t last = ~0ull; if (use && g_frame != last) { last = g_frame; fprintf(stderr, "mosaic f%llu eng %d reg %04x\n", (unsigned long long)g_frame, eng, R16(e, 0x4C)); } } }
@@ -537,9 +694,134 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
     uint8_t* info = &g_comp_info[y * 256 * 4];
     uint32_t mbbyte = (uint32_t)((((mb >> 14) & 3) << 5) | ((mb & 31) > 16 ? 16 : (mb & 31))) << 24;
     #define MARK3D 0xFFu                                            /* GL mode: the 3D layer, decided on the GPU */
+    /* HD text: for each pixel, which BGs would show if they had a pixel there,
+     * the picture without the letters, and the letters seen (text_hd.h) */
+    int tx = g_tx_active && dst;
+    int bg_tagged = 0;
+    if (tx) for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && !(bg == 0 && bg_3d) && bgl[bg].tagged) bg_tagged = 1;
+    int obj_tagged = tx && obj_on && objl.tagged;
+    /* the per-pixel work only on lines with letters, and the ones next to them
+     * (from the last frame: a letter's HD shape can reach a row beyond its pixels) */
+    int txa = 0, txb = 255;                                         /* ...and there, near its letters (a letter is at most 16 wide; labels: tagged across) */
+    if (tx) {
+        if (bg_tagged || obj_tagged) {
+            g_tx_line_now[eng][y] = 1;
+            int lo = 256, hi = -1;
+            for (int bg = 0; bg < 4; bg++) if (bg_on[bg] && !(bg == 0 && bg_3d) && bgl[bg].tagged)
+                for (int x = 0; x < 256; x++) if (bgl[bg].tag[x]) { if (x < lo) lo = x; if (x > hi) hi = x; }
+            if (obj_tagged) for (int x = 0; x < 256; x++) if (objl.tag[x]) { if (x < lo) lo = x; if (x > hi) hi = x; }
+            txa = lo - 18 < 0 ? 0 : lo - 18; txb = hi + 18 > 255 ? 255 : hi + 18;
+        } else if (!g_tx_line_near[eng][y]) tx = 0;
+        if (!tx || txa > 0 || txb < 255) memset(&g_tx_vis[eng][y * 256], 0, 256);
+    }
+    static uint16_t ink_at[256], ink2_at[256];                                    /* list index + 1 of a letter whose own pixel this is */
+    if (tx) { memset(ink_at, 0, sizeof ink_at); memset(ink2_at, 0, sizeof ink2_at); }
     for (int x = 0; x < 256; x++) {
         uint32_t v1 = backdrop, v2 = 0, v3 = 0;
         uint8_t wm = winmask[x];
+        if (tx && x >= txa && x <= txb) {
+            int idx = y * 256 + x;
+            uint8_t vis = 0; int covered = 0, any = 0;
+            /* a pixel blended (alpha) with the one behind it: that one shows through too */
+            int thru = 0, alpha_ok = ((bldcnt >> 6) & 3) == 1 && (wm & 0x20);
+            ink_at[x] = 0; ink2_at[x] = 0;
+            for (int k = norder - 1; k >= 0; k--) {                   /* front to back */
+                int L = order[k];
+                if (L >= 4) {                                       /* sprites of priority L - 4: vis bits 4-7 */
+                    if (!covered && (wm & 0x10) && (!thru || ((bldcnt >> 12) & 1))) {
+                        vis |= (uint8_t)(1 << L);
+                        if (obj_tagged && objl.tag[x] && objl.prio[x] == L - 4 && (objl.col[x] & PX_OPAQUE)) {
+                            any = 1;
+                            const TxTag* t = objl.tag[x];
+                            TxInst* in = tx_occurrence(tx_inst_of(t), eng, x - t->col, y - (t->row & 0x3F));
+                            if (in && in->seen[eng] != g_frame + 1 && g_tx_n[eng] < TX_LIST_MAX) {
+                                in->seen[eng] = g_frame + 1;
+                                in->ox[eng] = (int16_t)(x - t->col); in->oy[eng] = (int16_t)(y - (t->row & 0x3F));
+                                in->layer[eng] = (uint8_t)L; in->ink[eng] = 0xFF000000u; in->ink2[eng] = 0xFF000000u;
+                                g_tx_list[eng][g_tx_n[eng]++] = tx_inst_index(in);
+                            }
+                            if (in && in->ink[eng] == 0xFF000000u && !(t->row & 0xC0) && !ink_at[x]) ink_at[x] = (uint16_t)(tx_inst_index(in) + 1);
+                            if (in && in->ink2[eng] == 0xFF000000u && (t->row & 0x80) && !ink2_at[x]) ink2_at[x] = (uint16_t)(tx_inst_index(in) + 1);
+                        }
+                    }
+                    if ((wm & 0x10) && (objl.col[x] & PX_OPAQUE) && objl.prio[x] == L - 4 && !covered) {
+                        if (!thru && (wm & 0x20) && (objl.flag[x] == 0x80 || (alpha_ok && ((bldcnt >> 4) & 1)))) thru = 1; else covered = 1;
+                    }
+                }
+                else if (L == 0 && bg_3d) { if ((wm & 1) && !gl3d && g_3d_present && (g_3d_line32[x] >> 24)) covered = 1; }   /* GL: decided on the GPU (letters go under its 3D) */
+                else {
+                    if (!covered && (wm & (1 << L)) && (!thru || ((bldcnt >> (8 + L)) & 1))) {
+                        vis |= (uint8_t)(1 << L);
+                        if (bg_tagged && bgl[L].tagged && bgl[L].tag[x]) {
+                            any = 1;
+                            const TxTag* t = bgl[L].tag[x];
+                            TxInst* in = tx_occurrence(tx_inst_of(t), eng, x - t->col, y - (t->row & 0x3F));
+                            if (in && in->seen[eng] != g_frame + 1 && g_tx_n[eng] < TX_LIST_MAX) {
+                                in->seen[eng] = g_frame + 1;
+                                in->ox[eng] = (int16_t)(x - t->col); in->oy[eng] = (int16_t)(y - (t->row & 0x3F));
+                                in->layer[eng] = (uint8_t)L; in->ink[eng] = 0xFF000000u; in->ink2[eng] = 0xFF000000u;
+                                g_tx_list[eng][g_tx_n[eng]++] = tx_inst_index(in);
+                            }
+                            if (in && in->ink[eng] == 0xFF000000u && !(t->row & 0xC0) && (bgl[L].col[x] & PX_OPAQUE) && !ink_at[x]) ink_at[x] = (uint16_t)(tx_inst_index(in) + 1);
+                            if (in && in->ink2[eng] == 0xFF000000u && (t->row & 0x80) && (bgl[L].col[x] & PX_OPAQUE) && !ink2_at[x]) ink2_at[x] = (uint16_t)(tx_inst_index(in) + 1);
+                        }
+                    }
+                    if ((wm & (1 << L)) && (bgl[L].col[x] & PX_OPAQUE) && !covered) {
+                        if (!thru && alpha_ok && ((bldcnt >> L) & 1)) thru = 1; else covered = 1;
+                    }
+                }
+            }
+            g_tx_notext[eng][idx] = 0xFF000000u;                    /* = what is shown (filled in below) */
+#ifdef DQIX_PIXDBG
+            { static int px_x = -2, px_y; if (px_x == -2) { const char* s = getenv("DQIX_PIX"); px_x = -1; if (s) sscanf(s, "%d,%d", &px_x, &px_y); }
+              if (x == px_x && y == px_y) { fprintf(stderr, "[f%llu] VIS eng%d bldcnt %04x alpha %04x wm %02x vis %02x any %d thru %d covered %d order", (unsigned long long)g_frame, eng, bldcnt, bldalpha, wm, vis, any, thru, covered);
+                for (int k = 0; k < norder; k++) { int L = order[k]; fprintf(stderr, " %d(%s%s)", L, L < 4 ? ((bgl[L].col[x] & PX_OPAQUE) ? "op" : "-") : ((objl.col[x] & PX_OPAQUE) ? "op" : "-"), L < 4 && bgl[L].tag[x] ? ",tag" : ""); }
+                fprintf(stderr, "\n");
+                if (objl.tag[x]) { const TxTag* t = objl.tag[x]; TxInst* in = tx_inst_of(t); fprintf(stderr, "   OBJ tag col %d row %d under %d -> font %d idx %d o %d,%d w %d h %d seen %d\n", t->col, t->row, t->under, in ? in->font : -1, in ? in->index : -1, in ? in->ox[eng] : 0, in ? in->oy[eng] : 0, in ? in->w : 0, in ? in->h : 0, in ? (int)(in->seen[eng] == g_frame + 1) : -1); }
+                for (int L = 0; L < 4; L++) if (bgl[L].tag[x]) { const TxTag* t = bgl[L].tag[x]; TxInst* in = tx_inst_of(t);
+                    fprintf(stderr, "   L%d tag inst %u col %d row %d under %d -> %p font %d idx %d canvas %08x xy %d,%d o %d,%d ink %06x serial %u shadow %d\n", L, t->inst, t->col, t->row, t->under, (void*)in, in ? in->font : -1, in ? in->index : -1, in ? in->canvas : 0, in ? in->x : 0, in ? in->y : 0, in ? in->ox[eng] : 0, in ? in->oy[eng] : 0, in ? in->ink[eng] : 0, in ? in->serial : 0, in ? tx_is_shadow(in, eng) : -1); } } }
+#endif
+            if (any) {                                              /* the same pixel without the letters */
+                uint32_t n1 = backdrop, n2 = 0, n3 = 0;
+                for (int k = 0; k < norder; k++) {
+                    int L = order[k];
+                    uint32_t v;
+                    if (L >= 4) {
+                        if (!(wm & 0x10) || !(objl.col[x] & PX_OPAQUE) || objl.prio[x] != L - 4) continue;
+                        uint32_t c = (obj_tagged && objl.tag[x]) ? objl.ucol[x] : objl.col[x];
+                        if (!(c & PX_OPAQUE) && obj_tagged && objl.tag[x]) c = objl.col2[x];   /* a letter sprite over another sprite */
+                        if (!(c & PX_OPAQUE)) continue;
+                        v = to6(c) | ((uint32_t)objl.flag[x] << 24);
+                    } else if (L == 0 && bg_3d) {
+                        if (!(wm & 1)) continue;
+                        if (gl3d) v = 0xFFu << 24;
+                        else {
+                            uint32_t c = g_3d_line32[x];
+                            if (!g_3d_present || !(c >> 24)) continue;
+                            v = (c & 0x3F3F3F) | ((0x40u | ((c >> 24) & 0x1F)) << 24);
+                        }
+                    } else {
+                        uint32_t c = (bgl[L].tagged && bgl[L].tag[x]) ? bgl[L].ucol[x] : bgl[L].col[x];
+                        if (!(wm & (1 << L)) || !(c & PX_OPAQUE)) continue;
+                        v = to6(c) | (1u << (24 + L));
+                    }
+                    n3 = n2; n2 = n1; n1 = v;
+                }
+                int fx0 = (wm & 0x20) != 0;
+                if ((n1 >> 24) == 0xFF)                            /* the 3D on top: the 2D below it, as for dst ("bare": see gl_render.c) */
+                    g_tx_notext[eng][idx] = to_rgb6(color_composite(n2, n3, bldcnt, fx0, eva, evb, evy)) | 0x01000000u;
+                else {
+                    int blend3d = 0;
+                    if ((n2 >> 24) == 0xFF) {                       /* blended with the 3D below: the 2D part (the GPU blends, as for dst) */
+                        uint32_t f1 = n1 >> 24, layer = (f1 & 0x80) ? 0x10 : f1;
+                        if (((bldcnt >> 8) & 1) && ((f1 & 0x80) || (fx0 && (bldcnt & layer) && ((bldcnt >> 6) & 3) == 1))) blend3d = 1;
+                        else n2 = n3;
+                    }
+                    g_tx_notext[eng][idx] = blend3d ? to_rgb6(n1) : to_rgb6(master_bright(color_composite(n1, n2, bldcnt, fx0, eva, evb, evy), mb));
+                }
+            }
+            g_tx_vis[eng][idx] = vis;
+        }
         for (int k = 0; k < norder; k++) {
             int L = order[k];
             uint32_t v;
@@ -560,6 +842,10 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
             }
             v3 = v2; v2 = v1; v1 = v;
         }
+#ifdef DQIX_PIXDBG
+        { static int px_x = -2, px_y; if (px_x == -2) { const char* s = getenv("DQIX_PIX"); px_x = -1; if (s) sscanf(s, "%d,%d", &px_x, &px_y); }
+          if (x == px_x && y == px_y) fprintf(stderr, "[f%llu] TOP eng%d v1 %08x v2 %08x objprio %d objcol %08x\n", (unsigned long long)g_frame, eng, v1, v2, objl.prio[x], objl.col[x]); }
+#endif
         int fx = (wm & 0x20) != 0;
         if (!dst) { line6[x] = color_composite(v1, v2, bldcnt, fx, eva, evb, evy); continue; }
         if (gl3d && (v1 >> 24) == MARK3D) {                         /* 3D on top */
@@ -590,6 +876,14 @@ static void compose_line(Engine* e, int eng, int y, uint32_t disp, uint32_t* lin
         }
         line6[x] = color_composite(v1, v2, bldcnt, fx, eva, evb, evy);
         dst[x] = to_rgb6(master_bright(line6[x], mb));
+    }
+    if (tx) {
+        uint32_t* nt = &g_tx_notext[eng][y * 256];
+        for (int x = 0; x < 256; x++) {
+            if (nt[x] == 0xFF000000u) nt[x] = dst[x];
+            if (ink_at[x]) { TxInst* in = tx_inst_at(ink_at[x] - 1u); if (in->ink[eng] == 0xFF000000u) in->ink[eng] = dst[x] & 0xFFFFFF; }
+            if (ink2_at[x]) { TxInst* in = tx_inst_at(ink2_at[x] - 1u); if (in->ink2[eng] == 0xFF000000u) in->ink2[eng] = dst[x] & 0xFFFFFF; }
+        }
     }
     #undef MARK3D
 }
@@ -644,7 +938,12 @@ static void line_regs_post(int eng, int y) {
 
 double g_t2d_ms;
 #include <time.h>
-static double ms_now2(void) { struct timespec t; timespec_get(&t, TIME_UTC); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }   /* always on: bug reports show 2D time */
+#if defined(_WIN32) && !defined(TIME_UTC)                       /* (MinGW with the old C runtime) */
+#include <windows.h>
+static double ms_now2(void) { LARGE_INTEGER c, f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f); return (double)c.QuadPart * 1e3 / (double)f.QuadPart; }
+#else
+static double ms_now2(void) { struct timespec t; timespec_get(&t, TIME_UTC); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+#endif   /* always on: bug reports show 2D time */
 void gpu_render_line_(int line);
 void gpu_render_line(int line) { double t0 = ms_now2(); gpu_render_line_(line); g_t2d_ms += ms_now2() - t0; }
 void gpu_render_line_(int line) {
@@ -677,8 +976,95 @@ static void write_ppm(const char* path) {
 }
 
 void gpu_frame_done(void) {
+#ifdef DQIX_PIXDBG
+    {   /* DQIX_VDUMP=dir,frame,...: VRAM, palettes, OAM, IO and main RAM at those frames */
+        const char* s = getenv("DQIX_VDUMP");
+        if (s) {
+            char dir[256]; const char* c = strchr(s, ',');
+            if (c) {
+                snprintf(dir, sizeof dir, "%.*s", (int)(c - s), s);
+                for (const char* q = c; q && *q; q = strchr(q + 1, ',')) {
+                    if (strtoull(q + 1, NULL, 10) == g_frame) {
+                        char path[400]; FILE* f;
+                        snprintf(path, sizeof path, "%s/f%06llu.bin", dir, (unsigned long long)g_frame);
+                        if ((f = fopen(path, "wb"))) {
+                            fwrite(g_vram, 1, sizeof g_vram, f); fwrite(g_palette, 1, 0x800, f); fwrite(g_oam, 1, 0x800, f);
+                            fwrite(g_io, 1, 0x2000, f); fwrite(g_main_ram, 1, MAIN_RAM_SIZE, f); fclose(f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
+#ifdef DQIX_PIXDBG
+    {   /* DQIX_POKE=from_frame:addr:byte,...: tests (like a cheat code, written every frame) */
+        const char* e = getenv("DQIX_POKE");
+        for (const char* q = e; q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : NULL) {
+            unsigned long long f; unsigned a, v;
+            if (sscanf(q, "%llu:%x:%x", &f, &a, &v) == 3 && g_frame >= f) { void mem_write8(uint32_t, uint8_t); mem_write8(a, (uint8_t)v); }
+        }
+    }
+#endif
     uint16_t pow; memcpy(&pow, &g_io[0x304], 2);
     int a_top = (pow >> 15) & 1;
+    tx_frame_done();
+#ifdef DQIX_PIXDBG
+    {   /* DQIX_LAYERDUMP=dir,frame,...: g_ldump, g_vram and the screens */
+        const char* e = getenv("DQIX_LAYERDUMP");
+        if (e) { const char* c = strchr(e, ','); char dir[256];
+            if (c) { snprintf(dir, sizeof dir, "%.*s", (int)(c - e), e);
+                for (const char* q = c; q && *q; q = strchr(q + 1, ',')) if (strtoull(q + 1, NULL, 10) == g_frame) {
+                    char path[400]; snprintf(path, sizeof path, "%s/ld%06llu.bin", dir, (unsigned long long)g_frame);
+                    FILE* f = fopen(path, "wb");
+                    if (f) { int top = (pow >> 15) & 1; fwrite(&top, 4, 1, f); fwrite(g_ldump, sizeof g_ldump, 1, f); fwrite(g_vram, sizeof g_vram, 1, f); fwrite(g_engine_out, sizeof g_engine_out, 1, f); fclose(f); }
+                    break; } } }
+        if (g_ldump_on > 0) memset(g_ldump, 0, sizeof g_ldump);
+    }
+#endif
+    {   /* DQIX_TXDUMP=dir,frame,...: HD text debugging: the picture without the letters | the letters' cells */
+        const char* e = getenv("DQIX_TXDUMP");
+        if (e && g_tx_active) {
+            char dir[256]; const char* c = strchr(e, ',');
+            if (c) {
+                snprintf(dir, sizeof dir, "%.*s", (int)(c - e), e);
+                for (const char* q = c; q && *q; q = strchr(q + 1, ',')) {
+                    if (strtoull(q + 1, NULL, 10) != g_frame) continue;
+                    char path[400]; snprintf(path, sizeof path, "%s/tx%06llu.ppm", dir, (unsigned long long)g_frame);
+                    FILE* f = fopen(path, "wb");
+                    if (!f) break;
+                    fprintf(f, "P6\n768 384\n255\n");
+                    for (int sc = 0; sc < 2; sc++) {
+                        int eng = (sc == 0) == (a_top != 0) ? 0 : 1;
+                        for (int yy = 0; yy < 192; yy++) for (int part = 0; part < 3; part++) for (int xx = 0; xx < 256; xx++) {
+                            int idx = yy * 256 + xx;
+                            uint32_t col = part == 0 ? g_engine_out[eng][idx] : g_tx_notext[eng][idx];
+                            if (part == 2) {
+                                uint16_t* sl = g_tx_slot[eng][idx];
+                                int k = 0; while (k < 4 && sl[k]) k++;
+                                if (k) {
+                                    TxInst* in = tx_inst_at(g_tx_list[eng][sl[k - 1] - 1]);
+                                    uint32_t h = in->serial * 2654435761u;
+                                    col = ((col >> 1) & 0x7F7F7F) + (((h >> 8) & 0x7F7F7F));
+                                    if (k > 1) col = 0xFF00FF;
+                                }
+                            }
+                            uint8_t rgb[3] = { (uint8_t)(col >> 16), (uint8_t)(col >> 8), (uint8_t)col };
+                            fwrite(rgb, 1, 3, f);
+                        }
+                    }
+                    fclose(f);
+                    const char* hd = getenv("DQIX_TXHD");
+                    if (hd) {
+                        void tx_debug_render(const char* path, int scale, int a_top);
+                        snprintf(path, sizeof path, "%s/hd%06llu.ppm", dir, (unsigned long long)g_frame);
+                        tx_debug_render(path, atoi(hd) > 0 ? atoi(hd) : 4, a_top);
+                    }
+                    break;
+                }
+            }
+        }
+    }
     if (!(pow & 1)) {                                               /* LCDs off */
         memset(g_screen, 0, sizeof g_screen);
     } else {

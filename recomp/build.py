@@ -574,6 +574,7 @@ def main():
     ap.add_argument("--hle", help="file listing '<module> <addr>' functions the runtime provides instead")
     ap.add_argument("--interpret", help="file listing '<module> <addr>' functions to run in the interpreter (code that changes at run time)")
     ap.add_argument("--patch", help="file listing '<module> <addr> <new 32-bit ARM word>' instruction overrides (e.g. removing anti-piracy traps)")
+    ap.add_argument("--wrap", help="file listing '<module> <addr>' functions recompiled as <name>_orig: the runtime provides <name>, which calls it (hooks around the game's own code)")
     ap.add_argument("--tags", help="file listing '<module> <call addr> <tag>': the 3D drawn during these calls carries the tag (e.g. the stylus arrow, hidden while walking with a stick); the game's code is unchanged")
     args = ap.parse_args()
 
@@ -598,6 +599,12 @@ def main():
             line = line.split("#")[0].split()
             if len(line) == 2:
                 hle.add((line[0], int(line[1], 16)))
+    wrap = set()
+    if args.wrap:
+        for line in open(args.wrap):
+            line = line.split("#")[0].split()
+            if len(line) == 2:
+                wrap.add((line[0], int(line[1], 16)))
     os.makedirs(args.out, exist_ok=True)
 
     # Translate everything in memory first: translating can discover secondary
@@ -617,7 +624,13 @@ def main():
                 code[(fn.module.name, fn.addr)] = f"/* {fn.cname}: provided by the runtime (HLE) */"
                 rc.stats["hle_functions"] += 1
                 continue
-            code[(fn.module.name, fn.addr)] = rc.emit_func(fn)
+            body = rc.emit_func(fn)
+            if (fn.module.name, fn.addr) in wrap:     # the runtime's fn calls this one (hooks around it)
+                sig = f"void {fn.cname}(Cpu* c)"
+                assert sig in body, sig
+                body = body.replace(sig, f"void {fn.cname}_orig(Cpu* c)", 1)
+                rc.stats["wrapped_functions"] = rc.stats.get("wrapped_functions", 0) + 1
+            code[(fn.module.name, fn.addr)] = body
         queue, rc.pending = rc.pending, []
 
     funcs = list(rc.all_funcs())
@@ -625,6 +638,8 @@ def main():
         f.write("#pragma once\n#include \"cpu.h\"\n")
         for fn in funcs:
             f.write(f"void {fn.cname}(Cpu* c);\n")
+            if (fn.module.name, fn.addr) in wrap:
+                f.write(f"void {fn.cname}_orig(Cpu* c);\n")
 
     files = []
     for m in mods:

@@ -1597,6 +1597,15 @@ void gpu3d_vblank(void) {
         qsort(render_list, nsort, sizeof render_list[0], ysort_cmp);
         render_n = n_poly;
         new_list = 1;
+        { static int st = -1; if (st < 0) st = getenv("DQIX_TXSTAT") != NULL;   /* HD text debugging: textures with letters, the polygon under a pixel */
+          { static int px = -2, py, pf; if (px == -2) { const char* e = getenv("DQIX_POLYAT"); px = -1; if (e) sscanf(e, "%d,%d,%d", &pf, &px, &py); }
+            if (px >= 0 && (int)g_frame >= pf - 3 && (int)g_frame <= pf) for (u32 i = 0; i < n_poly; i++) { HPoly* q = render_list[i]; s32 x0 = 9999, x1 = -9999, y0 = 9999, y1 = -9999;
+                for (u32 k = 0; k < q->n; k++) { s32 X = q->v[k]->fpos[0], Y = q->v[k]->fpos[1]; if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+                if (px >= x0 && px <= x1 && py >= y0 && py <= y1) fprintf(stderr, "POLYAT f%d poly %u tex %08x pal %08x box %d,%d-%d,%d attr %08x\n", (int)g_frame, i, q->texparam, q->texpal, x0, y0, x1, y1, q->attr);
+                  if (px >= x0 && px <= x1 && py >= y0 && py <= y1) { u32 a = (q->texparam & 0xFFFF) << 3; uint8_t* sl = g_tex_slot[(a >> 17) & 3];
+                    if (sl) { fprintf(stderr, "  vram off %06x:", (unsigned)(sl + (a & 0x1FFFF) - g_vram)); for (int k = 0; k < 32; k++) fprintf(stderr, " %02x", sl[(a & 0x1FFFF) + k]); fprintf(stderr, "\n"); } } } }
+          if (st) { int tx_tex_tagged(uint32_t), tx_tex_untagged(uint32_t); for (u32 i = 0; i < n_poly; i++) { int k = tx_tex_tagged(render_list[i]->texparam);
+              if (k) fprintf(stderr, "[f%llu] poly %u tex %08x pal %08x: %d tagged texels, %d untagged\n", (unsigned long long)g_frame, i, render_list[i]->texparam, render_list[i]->texpal, k, tx_tex_untagged(render_list[i]->texparam)); } } }
         /* the widescreen list, if the whole frame was made with it */
         /* (a frame without polygons - the black of a scene change - keeps the
          * current width: switching to 256 and back rebuilt the renderer's

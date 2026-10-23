@@ -1,8 +1,10 @@
+#include <stdio.h>
 /* Shared timing, per-CPU interrupts / timers / DMA, and the ARM9's I/O registers. */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "nds.h"
+#include "text_hd.h"
 /* DQIX_RAMDUMP=dir,frame,frame...: main RAM at those frames (debugging) */
 static void ram_dump_check(void) {
     static int init; static char dir[256]; static unsigned long long at[64]; static int n;
@@ -130,8 +132,12 @@ static void dma_run(Core* k, int ch) {
     int word = (ctl >> 26) & 1, step = word ? 4 : 2;
     int sctl = (ctl >> 23) & 3, dctl = (ctl >> 21) & 3;
     uint32_t s = d->src, t = d->dst;
+#ifdef DQIX_PIXDBG
+    { const char* e = getenv("DQIX_DMALOG"); if (e && k->id == 0 && g_frame >= strtoull(e, NULL, 10) && g_frame <= strtoull(e, NULL, 10) + 2) fprintf(stderr, "[f%llu l%u] DMA%d %08x -> %08x x%u (%s)\n", (unsigned long long)g_frame, g_vcount, ch, s, t, count, word ? "32" : "16"); }
+#endif
     for (uint32_t i = 0; i < count; i++) {
         if (word) b->w32(t, b->r32(s)); else b->w16(t, b->r16(s));
+        if (k->id == 0 && g_tx_any) tx_copy(t, s, step);               /* HD text: the tags follow the pixels */
         if (sctl == 0) s += step; else if (sctl == 1) s -= step;
         if (dctl == 0 || dctl == 3) t += step; else if (dctl == 1) t -= step;
     }

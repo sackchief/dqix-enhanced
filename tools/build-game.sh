@@ -31,7 +31,7 @@ PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
 echo "== Extracting the game's code"
 $PY tools/extract_rom.py "$ROM" build/extract
 echo "== Recompiling it to C (about a minute)"
-$PY recomp/build.py --extract build/extract --config config/usa/arm9 --out build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt
+$PY recomp/build.py --extract build/extract --config config/usa/arm9 --out build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt --wrap wrap.txt
 $PY recomp/arm7.py --extract build/extract --out build/recomp7 --hle hle7.txt
 
 # The program's icon: the game's own (the one the DS menu shows), made from the
@@ -90,6 +90,7 @@ mkdir -p game/data game/skins
 rm -rf game/data/code && cp -r build/extract game/data/code     # the overlays (the game checks which is loaded)
 if ! cmp -s "$ROM" game/data/dqix.nds; then cp "$ROM" game/data/dqix.nds; fi
 cp skins/*.png skins/*.txt game/skins/ 2>/dev/null || true
+mkdir -p game/fonts && cp fonts/* game/fonts/              # HD text (fonts/README.txt)
 # optional files: the built-in Wi-Fi server's downloads and DQVC schedule
 for src in extras/wfc wfc; do
     for g in "$src"/*/; do

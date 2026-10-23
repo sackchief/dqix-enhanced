@@ -21,6 +21,8 @@
 #include "nds.h"
 #include "gpu3d.h"
 #include "gl_render.h"
+#include "text_hd.h"
+#include "text_hd_glyphs.h"
 
 /* ---------------------------------------------------------------- GL functions */
 #define GL_FUNCS(X) \
@@ -218,10 +220,17 @@ static const char* FS_COMP =
     "uniform sampler2D u_col; uniform sampler2D u_c2; uniform usampler2D u_info; uniform sampler2D u_3d;\n"
     "uniform int u_has3d; uniform vec2 u_outsize;\n"
     "uniform int u_wide; uniform float u_wtot, u_wside;\n"   /* widescreen: DS pixels across, added each side */
+    /* HD text (text_hd.h): over each pixel up to 4 letters (u_slot: their entries
+     * in u_inst + 1: top left in DS pixels, atlas cell, colour), and the picture
+     * without them (u_notext). The letters come from the atlas (8 pixels per DS
+     * pixel, mipmapped) and go over the 2D picture, before the 3D is blended in. */
+    "uniform int u_hd, u_eng; uniform usampler2D u_slot; uniform sampler2D u_notext; uniform isampler2D u_inst; uniform sampler2D u_atlas;\n"
     "vec3 q5(vec3 c) { return floor(c * 31.0 + 0.5); }\n"
     "void main() {\n"
     "  vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);\n"                  /* row 0 = top line */
     "  float dsx = u_wide != 0 ? uv.x * u_wtot - u_wside : uv.x * 256.0;\n"
+    "  vec2 dsp = vec2(dsx, uv.y * 192.0);\n"
+    "  vec2 gdx = dFdx(dsp) * 8.0, gdy = dFdy(dsp) * 8.0;\n"
     "  ivec2 p2 = ivec2(min(vec2(dsx, uv.y * 192.0), vec2(255.0, 191.0)));\n"
     "  bool side = u_wide != 0 && (dsx < 0.0 || dsx >= 256.0);\n"
     "  if (side) {\n"
@@ -239,16 +248,47 @@ static const char* FS_COMP =
     "    p2.x = found;\n"
     "  }\n"
     "  vec3 col = texelFetch(u_col, p2, 0).rgb;\n"
+    /* bare: under the letters there is no 2D, only the 3D (a message box
+     * blended over the field): the letters are blended over the 3D on their
+     * own, and where they don't cover the pixel the 3D shows as it is */
+    "  bool bare = false; float hdA = 0.0; vec3 hdL = vec3(0.0), nt = vec3(0.0);\n"
+    "  if (u_hd != 0 && !side) {\n"
+    "    uvec4 sl = texelFetch(u_slot, p2, 0);\n"
+    "    if (sl.x != 0u) {\n"
+    "      vec4 ntt = texelFetch(u_notext, p2, 0); nt = ntt.rgb; bare = ntt.a > 0.002 && ntt.a < 0.01;\n"
+    "      col = nt;\n"
+    "      vec2 asz = vec2(textureSize(u_atlas, 0));\n"
+    "      vec3 P = vec3(0.0); float A = 0.0;\n"
+    "      for (int k = 0; k < 4; k++) {\n"
+    "        uint s = sl[k];\n"
+    "        if (s == 0u) break;\n"
+    "        ivec4 g = texelFetch(u_inst, ivec2(int(s) - 1, u_eng), 0);\n"
+    "        vec2 org = vec2(float(g.z & 0xFFFF), float(g.z >> 16));\n"
+    "        vec2 a = org + (dsp - vec2(g.xy) + 1.0) * 8.0;\n"
+    "        float al = textureGrad(u_atlas, a / asz, gdx / asz, gdy / asz).r;\n"
+    "        vec3 ink = vec3(float((g.w >> 16) & 255), float((g.w >> 8) & 255), float(g.w & 255)) / 255.0;\n"
+    "        P = P * (1.0 - al) + ink * al; A = A * (1.0 - al) + al;\n"
+    "      }\n"
+    "      col = col * (1.0 - A) + P;\n"
+    "      hdA = A; if (A > 0.0) hdL = P / A;\n"
+    "    }\n"
+    "  }\n"
     "  if (u_has3d == 0) { o_color = vec4(col, 1.0); return; }\n"
     "  uvec4 info = texelFetch(u_info, p2, 0);\n"
     "  int mode = int(info.r & 3u);\n"
 
-    "  if (mode == 0) { o_color = vec4(col, 1.0); return; }\n"
+    "  if (mode == 0 && !bare) { o_color = vec4(col, 1.0); return; }\n"
+    "  if (bare) col = hdL;\n"
     "  vec4 c2t = texelFetch(u_c2, p2, 0);\n"
     "  vec3 c2 = c2t.rgb; int mb = int(c2t.a * 255.0 + 0.5);\n"
     "  ivec2 sz = textureSize(u_3d, 0);\n"
     "  vec4 s = texelFetch(u_3d, min(ivec2(v_uv * vec2(sz)), sz - 1), 0);\n"
     "  float A = s.a; vec3 c3 = s.rgb;\n"
+    "  if (mode == 0) {\n"                                    /* bare letters over the 3D, not blended: with the master brightness */
+    "    vec3 o0 = mix(A > 0.0 ? c3 : nt, hdL, hdA); int m0 = mb >> 5; float f0 = float(mb & 31) / 16.0;\n"
+    "    if (m0 == 1) o0 = o0 + (1.0 - o0) * f0; else if (m0 == 2) o0 = o0 - o0 * f0;\n"
+    "    o_color = vec4(o0, 1.0); return;\n"
+    "  }\n"
     "  float eva = float(info.g) / 16.0, evb = float(info.b) / 16.0, evy = float(info.a) / 16.0;\n"
     "  vec3 o;\n"
     "  if (mode == 1) {\n"
@@ -265,6 +305,7 @@ static const char* FS_COMP =
     "    vec3 under = A > 0.0 ? c3 : c2;\n"
     "    o = min(col * eva + under * evb, vec3(1.0));\n"
     "  }\n"
+    "  if (bare) o = mix(A > 0.0 ? c3 : nt, o, hdA);\n"
     "  int mbm = mb >> 5; float mbf = float(mb & 31) / 16.0;\n"
     "  if (mbm == 1) o = o + (1.0 - o) * mbf; else if (mbm == 2) o = o - o * mbf;\n"
     "  o_color = vec4(o, 1.0);\n"
@@ -537,7 +578,7 @@ static GLuint prog_poly, prog_post, prog_comp, prog_copy, prog_screen, prog_ghos
 static GLuint ghost_tex[2], ghost_fbo[2]; static int ghost_cur = -1, ghost_w, ghost_h;
 static GLuint skin_tex; static int skin_w, skin_h;          /* console photo (View > Console colour) */
 static GLuint vao_poly, vbo_poly, vao_quad, vbo_quad;
-static GLuint samplers[9];                                    /* [s_mode * 3 + t_mode]: clamp, repeat, mirror */
+static GLuint samplers[18];                                   /* [s_mode * 3 + t_mode]: clamp, repeat, mirror; +9: filtered (HD text textures) */
 static GLuint white_tex;
 
 typedef struct {
@@ -553,13 +594,15 @@ static int g_wide_shown = -1;                                  /* the screen com
 static float g_half_w = 128.0f;                                /* the frame being drawn: half its width (DS pixels) */
 
 static GLuint tex_col[2], tex_c2, tex_info;                   /* 2D inputs (per engine color; engine A extras) */
+static GLuint tex_tx_notext[2], tex_tx_slot[2], tex_tx_inst, tex_atlas;   /* HD text */
+static uint8_t g_atlas_made[TXG_NCELLS];
 static GLuint final_fbo, final_tex;                            /* both screens, stacked, at scale */
 static int g_ready;
 
 const int* g_gl_scale = &g_scale;
 
 /* ---------------------------------------------------------------- textures */
-typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex; int w, h; uint64_t checked, used; int live; } TexEntry;
+typedef struct { uint32_t ti, pl; uint64_t hash; GLuint tex; int w, h; uint64_t checked, used; int live, hd; int lab, lbx, lby, labok; } TexEntry;
 #define TEXCACHE 4096
 static TexEntry g_texcache[TEXCACHE];
 static int g_smooth;                                           /* smooth textures (bilinear filtering) */
@@ -620,23 +663,46 @@ static void bleed(uint8_t* px, int w, int h) {
     for (size_t i = 0; i < (size_t)w * h; i++) if (px[i * 4 + 3] == 1) px[i * 4 + 3] = 0;
 }
 
-static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h) {
+static int g_hd_text = 1;
+int tx_tex_tagged(uint32_t teximg);
+
+static GLuint texture_for(uint32_t ti, uint32_t pl, int* w, int* h, int* hd) {
     TexEntry* e = tex_lookup(ti, pl);
     gpu3d_tex_size(ti, w, h);
     e->used = g_frameno;
     if (e->checked != g_frameno) {
         e->checked = g_frameno;
         uint64_t hs = gpu3d_texture_hash(ti, pl);
-        if (hs != e->hash || e->w != *w || e->h != *h) {
+        int small16 = g_hd_text && ((ti >> 26) & 7) == 3 && *w <= 64 && *h <= 64;
+        int want_hd = small16 && g_tx_any && tx_tex_any(ti);
+        int lbx = e->lbx, lby = e->lby, lab = e->lab;               /* a label as a texture: looked up when its contents change */
+        if (small16 && !want_hd && (hs != e->hash || !e->labok)) { lab = tx_label_texture(ti, &lbx, &lby); e->lab = lab; e->lbx = lbx; e->lby = lby; e->labok = 1; }
+        if (!small16 || want_hd) lab = -1;
+        if (lab >= 0) want_hd = 2 + lab;
+        if (hs != e->hash || e->w != *w || e->h != *h || want_hd != e->hd) {
             double t0 = perf_ms();
             e->hash = hs; e->w = *w; e->h = *h;
             gpu3d_decode_texture(ti, pl, g_decode);
-            if (g_smooth) bleed(g_decode, *w, *h);
+            e->hd = 0;
+            if (want_hd) {                                       /* HD text: a texture with letters, made larger with them sharp */
+                static uint8_t big[64 * TXG_S * 64 * TXG_S * 4];
+                if (want_hd >= 2 ? txg_texture_label(ti, pl, g_decode, *w, *h, lab, lbx, lby, big) : txg_texture_hd(ti, pl, g_decode, *w, *h, big)) {
+                    e->hd = want_hd;
+                    bleed(big, *w * TXG_S, *h * TXG_S);
+                    p_glBindTexture(GL_TEXTURE_2D, e->tex);
+                    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w * TXG_S, *h * TXG_S, 0, GL_RGBA, GL_UNSIGNED_BYTE, big);
+                    p_glGenerateMipmap(GL_TEXTURE_2D);
+                }
+            }
+            if (g_smooth && !e->hd) bleed(g_decode, *w, *h);
+            if (!e->hd) {
             p_glBindTexture(GL_TEXTURE_2D, e->tex);
             p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *w, *h, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_decode);
+            }
             g_gl_stats.uploads++; g_gl_stats.upload_texels += *w * *h; g_gl_stats.upload_ms += perf_ms() - t0;
         }
     }
+    if (hd) *hd = e->hd;
     return e->tex;
 }
 
@@ -725,13 +791,17 @@ int gl_render_init(int scale) {
     p_glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
     p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     p_glEnableVertexAttribArray(0);
-    p_glGenSamplers(9, samplers);
+    p_glGenSamplers(18, samplers);
     static const GLint wrap[3] = { GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT };
     for (int i = 0; i < 9; i++) {
         p_glSamplerParameteri(samplers[i], GL_TEXTURE_MIN_FILTER, g_smooth ? GL_LINEAR : GL_NEAREST);
         p_glSamplerParameteri(samplers[i], GL_TEXTURE_MAG_FILTER, g_smooth ? GL_LINEAR : GL_NEAREST);
         p_glSamplerParameteri(samplers[i], GL_TEXTURE_WRAP_S, wrap[i / 3]);
         p_glSamplerParameteri(samplers[i], GL_TEXTURE_WRAP_T, wrap[i % 3]);
+        p_glSamplerParameteri(samplers[9 + i], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glSamplerParameteri(samplers[9 + i], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        p_glSamplerParameteri(samplers[9 + i], GL_TEXTURE_WRAP_S, wrap[i / 3]);
+        p_glSamplerParameteri(samplers[9 + i], GL_TEXTURE_WRAP_T, wrap[i % 3]);
     }
     static const uint8_t white[4] = { 255, 255, 255, 255 };
     white_tex = new_tex(GL_RGBA8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
@@ -740,6 +810,19 @@ int gl_render_init(int scale) {
     tex_col[1] = new_tex(GL_RGBA8, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
     tex_c2 = new_tex(GL_RGBA8, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
     tex_info = new_tex(GL_RGBA8UI, 256, 192, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, GL_NEAREST);
+    for (int i = 0; i < 2; i++) {
+        tex_tx_notext[i] = new_tex(GL_RGBA8, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
+        tex_tx_slot[i] = new_tex(GL_RGBA16UI, 256, 192, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, GL_NEAREST);
+    }
+    tex_tx_inst = new_tex(GL_RGBA32I, TX_LIST_MAX, 2, GL_RGBA_INTEGER, GL_INT, GL_NEAREST);
+    tex_atlas = new_tex(GL_R8, TXG_W, TXG_H, GL_RED, GL_UNSIGNED_BYTE, GL_LINEAR);
+    {   /* the atlas starts empty (cells are drawn as letters show up), with mipmaps */
+        uint8_t* z = calloc((size_t)TXG_W * TXG_H, 1);
+        if (z) { p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TXG_W, TXG_H, GL_RED, GL_UNSIGNED_BYTE, z); free(z); }
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 3);
+        p_glGenerateMipmap(GL_TEXTURE_2D);
+    }
     g_decode = malloc(1024 * 1024 * 4);
     p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     p_glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -804,7 +887,7 @@ static void push_vertex(int* nv, const SVtx* v, float alpha, const Poly* p, floa
 #define ST_TRANS 0x40                    /* a translucent polygon is on it (its id: bits 0-4, of the DS's 0-5) */
 #define ST_MASKBIT 0x20                  /* marked by the latest shadow mask */
 #define ST_ID 0x1F
-typedef struct { int first, count; GLuint tex; int sampler; float tw, th; int translucent, depth_write, depth_eq, lines, pid, shadow, fog, alpha1; } Batch;
+typedef struct { int first, count; GLuint tex; int sampler; float tw, th; int translucent, depth_write, depth_eq, lines, pid, shadow, fog, alpha1, hd; } Batch;
 static Batch* g_batches; static int g_bcap;
 
 static void gl_vblank(void) {
@@ -855,11 +938,11 @@ static void gl_render_(const Frame3D* f) {
         b.tex = white_tex; b.tw = 1; b.th = 1;
         if (textured) {
             int w, h;
-            b.tex = texture_for(p->teximg, p->pltt, &w, &h);
+            b.tex = texture_for(p->teximg, p->pltt, &w, &h, &b.hd);
             b.tw = (float)w; b.th = (float)h;
             int sm = (p->teximg >> 16) & 1 ? ((p->teximg >> 18) & 1 ? 2 : 1) : 0;
             int tm = (p->teximg >> 17) & 1 ? ((p->teximg >> 19) & 1 ? 2 : 1) : 0;
-            b.sampler = sm * 3 + tm;
+            b.sampler = sm * 3 + tm + (b.hd ? 9 : 0);
             b.alpha1 = fmt != 1 && fmt != 6;                      /* no alpha levels (only A3I5 and A5I3 have them) */
         }
         b.translucent = i >= f->n_opaque;
@@ -953,7 +1036,7 @@ static void gl_render_(const Frame3D* f) {
         p_glBindTexture(GL_TEXTURE_2D, b->tex);
         p_glBindSampler(0, samplers[b->sampler]);
         p_glUniform2f(loc_texsize, b->tw, b->th);
-        p_glUniform1i(loc_sharpa, g_smooth && b->alpha1);
+        p_glUniform1i(loc_sharpa, (g_smooth || b->hd) && b->alpha1);
         p_glDepthFunc(b->depth_eq ? GL_EQUAL : GL_LESS);
         p_glDepthMask(b->depth_write ? GL_TRUE : GL_FALSE);
         GLenum prim = b->lines ? GL_LINES : GL_TRIANGLES;
@@ -1090,8 +1173,41 @@ static void upload_rgb(GLuint tex, const uint32_t* src) {
     p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 }
 
+/* HD text: the letters seen this frame (their atlas cells drawn when first
+ * needed), the picture without them, and which are over each pixel. */
+void gl_set_hd_text(int on) { g_hd_text = on != 0; g_tx_active = g_hd_text; }
+void gl_hd_fonts(const char* dir) { txg_load_fonts(dir); txg_forget_cells(); memset(g_atlas_made, 0, sizeof g_atlas_made); }
+static int hd_upload(int eng) {
+    int n = g_tx_n[eng];
+    { static int lg = -1; if (lg < 0) lg = getenv("DQIX_TXLOG") != NULL;
+      if (lg && n) fprintf(stderr, "[f%llu] HD text: engine %d, %d letters (on %d)\n", (unsigned long long)g_frame, eng, n, g_hd_text); }
+    if (!g_hd_text || !n) return 0;
+    static int32_t inst[TX_LIST_MAX * 4];
+    static uint8_t cell[TXG_CELLMAX];
+    int drawn = 0;
+    p_glBindTexture(GL_TEXTURE_2D, tex_atlas);
+    for (int i = 0; i < n; i++) {
+        TxInst* in = tx_inst_at(g_tx_list[eng][i]);
+        int c = txg_cell(in->font, in->index), cx = 0, cy = 0, cw = 0, ch = 0;
+        if (c >= 0) txg_cell_rect(c, &cx, &cy, &cw, &ch);
+        if (c >= 0 && !g_atlas_made[c] && txg_render(in->font, in->index, cell)) {
+            g_atlas_made[c] = 1; drawn = 1;
+            p_glTexSubImage2D(GL_TEXTURE_2D, 0, cx, cy, cw, ch, GL_RED, GL_UNSIGNED_BYTE, cell);
+        }
+        inst[i * 4] = in->ox[eng]; inst[i * 4 + 1] = in->oy[eng]; inst[i * 4 + 2] = cx | cy << 16;   /* the cell's atlas position */ inst[i * 4 + 3] = (int32_t)(in->ink[eng] & 0xFFFFFF);
+    }
+    if (drawn) p_glGenerateMipmap(GL_TEXTURE_2D);
+    p_glBindTexture(GL_TEXTURE_2D, tex_tx_inst);
+    p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, eng, n, 1, GL_RGBA_INTEGER, GL_INT, inst);
+    upload_rgb(tex_tx_notext[eng], g_tx_notext[eng]);
+    p_glBindTexture(GL_TEXTURE_2D, tex_tx_slot[eng]);
+    p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, g_tx_slot[eng]);
+    return 1;
+}
+
 /* Build both screens into final_tex (top screen in the upper half). */
 void gl_compose(int a_on_top, int lcd_on) {
+    int hd[2] = { hd_upload(0), hd_upload(1) };
     upload_rgb(tex_col[0], g_engine_out[0]);
     upload_rgb(tex_col[1], g_engine_out[1]);
     int has3d = g_comp_has3d && g_fb_shown >= 0 && g_fb[g_fb_shown].valid;
@@ -1117,6 +1233,13 @@ void gl_compose(int a_on_top, int lcd_on) {
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wtot"), W);
     p_glUniform1f(p_glGetUniformLocation(prog_comp, "u_wside"), (float)g_wside);
     p_glUniform4f(p_glGetUniformLocation(prog_comp, "u_uv"), 0, 0, 1, 1);
+    p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_notext"), 4);
+    p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_slot"), 5);
+    p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_inst"), 6);
+    p_glUniform1i(p_glGetUniformLocation(prog_comp, "u_atlas"), 7);
+    GLint loc_hd = p_glGetUniformLocation(prog_comp, "u_hd"), loc_eng = p_glGetUniformLocation(prog_comp, "u_eng");
+    p_glActiveTexture(GL_TEXTURE6); p_glBindTexture(GL_TEXTURE_2D, tex_tx_inst);
+    p_glActiveTexture(GL_TEXTURE7); p_glBindTexture(GL_TEXTURE_2D, tex_atlas);
     p_glBindVertexArray(vao_quad);
     for (int eng = 0; eng < 2; eng++) {
         int top = eng == 0 ? a_on_top : !a_on_top;
@@ -1124,6 +1247,9 @@ void gl_compose(int a_on_top, int lcd_on) {
         p_glActiveTexture(GL_TEXTURE1); p_glBindTexture(GL_TEXTURE_2D, tex_c2);
         p_glActiveTexture(GL_TEXTURE2); p_glBindTexture(GL_TEXTURE_2D, tex_info);
         p_glActiveTexture(GL_TEXTURE3); p_glBindTexture(GL_TEXTURE_2D, has3d ? g_fb[g_fb_shown].post : white_tex);
+        p_glActiveTexture(GL_TEXTURE4); p_glBindTexture(GL_TEXTURE_2D, tex_tx_notext[eng]);
+        p_glActiveTexture(GL_TEXTURE5); p_glBindTexture(GL_TEXTURE_2D, tex_tx_slot[eng]);
+        p_glUniform1i(loc_hd, hd[eng]); p_glUniform1i(loc_eng, eng);
         p_glUniform1i(loc_has3d, eng == 0 && has3d);
         int wide = eng == 0 && has3d && g_wside > 0;                 /* the 3D screen, widened; the other in the middle */
         p_glUniform1i(loc_wide, wide);

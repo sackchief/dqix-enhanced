@@ -3,6 +3,7 @@
 /* ARM9 memory map. */
 #include <string.h>
 #include "nds.h"
+#include "text_hd.h"
 
 uint8_t g_main_ram[MAIN_RAM_SIZE];
 uint8_t g_itcm[ITCM_SIZE];
@@ -157,6 +158,7 @@ uint32_t mem_read32(uint32_t a) {
 static uint32_t g_watch = 1;
 static void watch_hit(uint32_t a, uint32_t v, int size) {
     fprintf(stderr, "[f%llu l%u] watch: write%d %08x = %x (lr %08x)\n", (unsigned long long)g_frame, g_vcount, size * 8, a, v, g_arm9.r[14]);
+    if (getenv("DQIX_WATCHREGS")) { for (int i = 0; i < 13; i++) fprintf(stderr, " r%d=%08x", i, g_arm9.r[i]); fprintf(stderr, "\n"); }
     trace_dump(stderr, getenv("DQIX_TRACEN") ? atoi(getenv("DQIX_TRACEN")) : 24);
 }
 static inline int watching(uint32_t a) {
@@ -170,21 +172,21 @@ void mem_write8(uint32_t a, uint8_t v) {
     /* 8-bit writes to VRAM/palette/OAM are ignored on the DS */
     if ((a >> 24) >= 5 && (a >> 24) <= 7) return;
     uint8_t* p = resolve(a, 1);
-    if (p) *p = v; else LOG_WARN("write8 to unmapped %08x = %02x\n", a, v);
+    if (p) { uint8_t o = *p; *p = v; tx_write_v(a, 1, (uint32_t)(o ^ v)); } else LOG_WARN("write8 to unmapped %08x = %02x\n", a, v);
 }
 void mem_write16(uint32_t a, uint16_t v) {
     a &= ~1u;
     if (watching(a)) watch_hit(a, v, 2);
     if ((a >> 24) == 4) { io9_write(a, v, 2); return; }
     uint8_t* p = resolve(a, 1);
-    if (p) memcpy(p, &v, 2); else LOG_WARN("write16 to unmapped %08x = %04x\n", a, v);
+    if (p) { uint16_t o; memcpy(&o, p, 2); memcpy(p, &v, 2); tx_write_v(a, 2, (uint32_t)(o ^ v)); } else LOG_WARN("write16 to unmapped %08x = %04x\n", a, v);
 }
 void mem_write32(uint32_t a, uint32_t v) {
     a &= ~3u;
     if (watching(a)) watch_hit(a, v, 4);
     if ((a >> 24) == 4) { io9_write(a, v, 4); return; }
     uint8_t* p = resolve(a, 1);
-    if (p) memcpy(p, &v, 4); else LOG_WARN("write32 to unmapped %08x = %08x\n", a, v);
+    if (p) { uint32_t o; memcpy(&o, p, 4); memcpy(p, &v, 4); tx_write_v(a, 4, o ^ v); } else LOG_WARN("write32 to unmapped %08x = %08x\n", a, v);
 }
 
 /* Bank access for the graphics engines (extended palettes, texture slots). */

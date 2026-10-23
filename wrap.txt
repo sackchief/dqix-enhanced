@@ -1,0 +1,19 @@
+# Functions recompiled as <name>_orig, with the runtime's <name> around them
+# (the game's own code still does all the work; the runtime only watches).
+# <module> <address>
+
+# Draws one glyph of a font into a tiled text canvas (4 bits per pixel):
+# func_0205b36c(canvas, glyph, x, y, [sp] colour, [sp+4] font). Watched by
+# text_hd.c, which notes where each letter went so the GPU renderer can draw
+# it again in high resolution (Graphics > HD text).
+main 0205b36c
+
+# Draws one glyph into a plain (not tiled) 4-bit buffer: func_02045864(x, y,
+# glyph, buffer, [sp] width, [sp+4] height, [sp+8] colour, [sp+12] font). The
+# battle messages over the field: each letter (with its shadow or outline) in
+# a 16x16 texture, drawn by the 3D engine. Watched by text_hd.c, like above.
+main 02045864
+
+# memcpy: the tags of letters follow them when the game copies them itself
+# (the textures above go through a staging buffer).
+main 02001a40

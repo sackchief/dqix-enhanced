@@ -7,7 +7,7 @@ D=..
 OUT=$D/build/pc
 mkdir -p "$OUT"
 echo "== Recompiling the game's code to C (about a minute)"
-python recomp/build.py --extract $D/extract/usa --config $D/config/usa/arm9 --out $D/build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt
+python recomp/build.py --extract $D/extract/usa --config $D/config/usa/arm9 --out $D/build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt --wrap wrap.txt
 python recomp/arm7.py --extract $D/extract/usa --out $D/build/recomp7 --hle hle7.txt
 echo "== Compiling (the first time takes a while; later builds only redo what changed)"
 # dqixcore.dll: the game again as a library, for the other players' DSes in a session (Wireless menu)
@@ -17,6 +17,7 @@ make -j"$(nproc)" -f build.mk OS=Windows_NT GEN=$D/build/recomp GEN7=$D/build/re
 cp /ucrt64/bin/SDL2.dll "$OUT/"
 mkdir -p "$OUT/skins"
 cp skins/*.png skins/*.txt "$OUT/skins/" 2>/dev/null || true     # console photos (View > Console colour)
+mkdir -p "$OUT/fonts" && cp fonts/* "$OUT/fonts/"                 # HD text (fonts/README.txt)
 for g in wfc/*/; do                                              # the built-in Wi-Fi server's files (Wireless menu)
     [ -f "$g/_list.txt" ] || continue
     mkdir -p "$OUT/$g" && cp "$g"* "$OUT/$g"
