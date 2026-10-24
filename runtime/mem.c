@@ -3,6 +3,7 @@
 /* ARM9 memory map. */
 #include <string.h>
 #include "nds.h"
+#include "hdtext.h"
 
 uint8_t g_main_ram[MAIN_RAM_SIZE];
 uint8_t g_itcm[ITCM_SIZE];
@@ -170,21 +171,21 @@ void mem_write8(uint32_t a, uint8_t v) {
     /* 8-bit writes to VRAM/palette/OAM are ignored on the DS */
     if ((a >> 24) >= 5 && (a >> 24) <= 7) return;
     uint8_t* p = resolve(a, 1);
-    if (p) *p = v; else LOG_WARN("write8 to unmapped %08x = %02x\n", a, v);
+    if (p) { *p = v; if (g_hdtext_any) hdtext_forget(p, 1); } else LOG_WARN("write8 to unmapped %08x = %02x\n", a, v);
 }
 void mem_write16(uint32_t a, uint16_t v) {
     a &= ~1u;
     if (watching(a)) watch_hit(a, v, 2);
     if ((a >> 24) == 4) { io9_write(a, v, 2); return; }
     uint8_t* p = resolve(a, 1);
-    if (p) memcpy(p, &v, 2); else LOG_WARN("write16 to unmapped %08x = %04x\n", a, v);
+    if (p) { memcpy(p, &v, 2); if (g_hdtext_any) hdtext_forget(p, 2); } else LOG_WARN("write16 to unmapped %08x = %04x\n", a, v);
 }
 void mem_write32(uint32_t a, uint32_t v) {
     a &= ~3u;
     if (watching(a)) watch_hit(a, v, 4);
     if ((a >> 24) == 4) { io9_write(a, v, 4); return; }
     uint8_t* p = resolve(a, 1);
-    if (p) memcpy(p, &v, 4); else LOG_WARN("write32 to unmapped %08x = %08x\n", a, v);
+    if (p) { memcpy(p, &v, 4); if (g_hdtext_any) hdtext_forget(p, 4); } else LOG_WARN("write32 to unmapped %08x = %08x\n", a, v);
 }
 
 /* Bank access for the graphics engines (extended palettes, texture slots). */

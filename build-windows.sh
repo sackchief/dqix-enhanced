@@ -7,7 +7,7 @@ D=..
 OUT=$D/build/pc
 mkdir -p "$OUT"
 echo "== Recompiling the game's code to C (about a minute)"
-python recomp/build.py --extract $D/extract/usa --config $D/config/usa/arm9 --out $D/build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt
+python recomp/build.py --extract $D/extract/usa --config $D/config/usa/arm9 --out $D/build/recomp --hle hle.txt --interpret interpret.txt --patch patches.txt --tags tags.txt --hooks hooks.txt
 python recomp/arm7.py --extract $D/extract/usa --out $D/build/recomp7 --hle hle7.txt
 echo "== Compiling (the first time takes a while; later builds only redo what changed)"
 # dqixcore.dll: the game again as a library, for the other players' DSes in a session (Wireless menu)

@@ -32,6 +32,11 @@ _Noreturn void rt_fatal(const char* fmt, ...);
 /* ---- cartridge ---- */
 extern uint8_t* g_rom;
 extern size_t g_rom_size;
+/* The European version (game code YDQP): its main ARM9 code has 16 bytes more
+ * (the language choice), so the code after them is 0x10 further on. */
+static inline int rom_is_eur(void) {
+    return g_rom && g_rom_size >= 16 && g_rom[12] == 'Y' && g_rom[13] == 'D' && g_rom[14] == 'Q' && g_rom[15] == 'P';
+}
 
 /* ---- memory ---- */
 #define MAIN_RAM_SIZE (4u << 20)
@@ -246,6 +251,9 @@ void net_enable(int on);
 void net_seal(int on);                       /* sessions: only the built-in server, in game time */
 typedef struct { int online; char dns[32]; uint8_t mac[6]; int mac_set; int builtin; } WirelessConfig;   /* builtin: wfc.c answers */
 extern WirelessConfig g_wireless;                  /* set by the frontend before boot */
+/* the DS's language (firmware user settings): 1 English, 2 French, 3 German, 4 Italian,
+ * 5 Spanish. The European version plays in it; the USA version is always in English. */
+extern int g_fw_language;                  /* set by the frontend before boot */
 void wifi_set_power(int on);
 void wifi_advance(uint32_t cycles);
 uint16_t wifi_read16(uint32_t addr);

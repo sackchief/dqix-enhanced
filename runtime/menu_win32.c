@@ -57,6 +57,21 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     sep(res);
     item(res, MI_RES_AUTO, L"&Auto: as sharp as your screen (up to 12x)");
     item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
+    item(gfx, MI_TEXUP, L"&Upscaled textures, xBR (Enhanced)");
+    item(gfx, MI_SMOOTH2D, L"Smooth &2D: menus, maps, sprites (Enhanced)");
+    sep(gfx);
+    item(gfx, MI_TEXPACK, L"&HD textures from the textures folder (Enhanced)");
+    item(gfx, MI_TEXRELOAD, L"&Reload the HD textures");
+    item(gfx, MI_TEXDUMP, L"&Dump textures to textures\\dump (for making a pack)");
+    sep(gfx);
+    item(gfx, MI_HDTEXT, L"HD te&xt (Enhanced)");
+    HMENU fnt = sub(gfx, L"Text &font");
+    item(fnt, MI_FONT0, L"The game's own letters, &smoothed");
+    item(fnt, MI_FONT0 + 1, L"&Georgia");
+    item(fnt, MI_FONT0 + 2, L"&Palatino Linotype");
+    item(fnt, MI_FONT0 + 3, L"&Constantia");
+    item(fnt, MI_FONT0 + 4, L"&Times New Roman");
+    item(fnt, MI_FONT0 + 5, L"Segoe &UI");
 
     HMENU scr = sub(g_bar, L"&Screen");
     item(scr, MI_LCD, L"&DS Lite screen\tF6");
@@ -145,6 +160,12 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");
+    HMENU lang = sub(g_bar, L"&Language");
+    item(lang, MI_LANG1, L"&English");
+    item(lang, MI_LANG1 + 1, L"&Fran\u00e7ais");
+    item(lang, MI_LANG1 + 2, L"&Deutsch");
+    item(lang, MI_LANG1 + 3, L"&Italiano");
+    item(lang, MI_LANG1 + 4, L"E&spa\u00f1ol");
     HMENU help = sub(g_bar, L"&Help");
     item(help, MI_CONTROLS, L"&Controls");
     item(help, MI_UPDATE, L"Check for &updates...");

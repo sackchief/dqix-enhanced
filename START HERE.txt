@@ -2,7 +2,7 @@ Dragon Quest IX for PC
 ======================
 
 This turns YOUR OWN Dragon Quest IX ROM (dumped from your cartridge; the
-USA version is the tested one, others can be tried) into a PC version of the game. No game files are included.
+USA and European versions work, others can be tried) into a PC version of the game. No game files are included.
 
 1. Double-click "Install Dragon Quest IX.bat". A window walks you through it:
    your ROM, where to put the game (Documents by default) and shortcuts.

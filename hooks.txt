@@ -1,0 +1,9 @@
+# Functions the runtime watches without changing what they do: the original
+# is kept (renamed <name>_orig) and the runtime's hook_<name> runs it.
+# <module> <address> <name> (USA addresses; tools/region.py moves them for the
+# European version)
+
+# HD text (runtime/hdtext.c): every letter the game draws, and where its
+# pixels go.
+main 0205b36c GlyphBlit                    # draws one letter into a text window
+main 02001a40 Memcpy                       # memcpy: the letters' tags go along

@@ -58,6 +58,8 @@ static const uint8_t fw_chandata[0x3C] = {
 static void put16(uint8_t* p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 
 void firmware_init(void) {
+    if (getenv("DQIX_LANGUAGE")) g_fw_language = atoi(getenv("DQIX_LANGUAGE"));   /* tests: 1-5 */
+    if (g_fw_language < 1 || g_fw_language > 5) g_fw_language = 1;
     memset(g_fw, 0xFF, sizeof g_fw);
     /* header + Wi-Fi calibration (0x000-0x1FF) */
     uint8_t* h = g_fw;
@@ -126,7 +128,7 @@ void firmware_init(void) {
          * (fixed-point, rounding down) is exact */
         put16(&u[0x58], 0x200); put16(&u[0x5A], 0x400); u[0x5C] = 0x20; u[0x5D] = 0x20;
         put16(&u[0x5E], 0xE00); put16(&u[0x60], 0xC00); u[0x62] = 0xE0; u[0x63] = 0xA0;
-        uint16_t flags = 0x0001 | 0x0400;    /* English, backlight */
+        uint16_t flags = (uint16_t)(g_fw_language | 0x0400);   /* language, backlight */
         memcpy(&u[0x64], &flags, 2);
         uint16_t count = (uint16_t)copy;
         memcpy(&u[0x70], &count, 2);
@@ -174,6 +176,7 @@ int firmware_load_image(const char* path) {
     return n == FW_SIZE;
 }
 WirelessConfig g_wireless;
+int g_fw_language = 1;
 
 /* What the firmware copies to RAM at boot: the user settings (newest valid
  * copy; both are the same here) and the header values the SDK reads. */
