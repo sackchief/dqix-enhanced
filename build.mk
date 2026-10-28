@@ -84,7 +84,7 @@ $(OBJ)/rt/menu_win32.o: runtime/menu_win32.c runtime/menu.h runtime/controls.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
-$(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
+$(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h runtime/autosave.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 

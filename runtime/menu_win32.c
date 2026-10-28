@@ -163,6 +163,7 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
     item(modern, MI_SCENE_BARS, L"Widescreen: &black sides in this place (remembered)");
     item(modern, MI_DISCORD, L"Show on &Discord what I'm playing");
+    item(modern, MI_AUTOSAVE, L"Sa&ve by itself every 10 minutes (on the field, as at a church)");
     item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (experimental: the party's panels in the bottom left)");
     sep(modern);
     item(modern, MI_MODERN_HELP, L"&What is this?");

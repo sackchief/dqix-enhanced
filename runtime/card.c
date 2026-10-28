@@ -167,6 +167,7 @@ static uint8_t g_backup[BACKUP_MAX];
 static uint32_t g_backup_size = 64 * 1024;   /* DQIX: 64 KB EEPROM (2-byte addresses) */
 static char g_backup_path[1024];
 static int g_backup_dirty;
+uint64_t g_backup_written;
 static uint8_t g_bk_cmd, g_bk_status;
 static uint32_t g_bk_addr, g_bk_count;
 
@@ -233,6 +234,7 @@ static int slot_valid(const uint8_t* b) {
     for (int i = 0; i < 3; i++) if (rd32(b + ck[i][0]) != crc32_buf(b + ck[i][1], (size_t)(ck[i][2] - ck[i][1]))) return 0;
     return 1;
 }
+int backup_slot_valid(const uint8_t* b) { return slot_valid(b); }
 /* Import / export (Game > Save file): how many of a save image's two adventure
  * slots are real DQIX saves (0: not a DQIX save), and swapping the save for
  * another one (written to the save file at once). */
@@ -275,6 +277,15 @@ int backup_unlock_dlc(void) {
     return n;
 }
 
+/* Modern > Save by itself (autosave.c): a save made outside the game's own
+ * writes, put on the chip as if the game had written it (backup_flush then
+ * writes the file). */
+void backup_store(uint32_t off, const uint8_t* p, uint32_t n) {
+    if (off >= g_backup_size || n > g_backup_size - off) return;
+    memcpy(g_backup + off, p, n);
+    g_backup_dirty = 1;
+}
+
 static uint8_t backup_xfer(uint8_t in, int hold) {
     uint8_t out = 0xFF;
     if (g_bk_cmd == 0) {
@@ -299,6 +310,7 @@ static uint8_t backup_xfer(uint8_t in, int hold) {
                 /* flash "page program" can only clear bits; EEPROM writes replace */
                 g_backup[a] = (g_bk_cmd == 0x02 && g_backup_size > 0x10000) ? (g_backup[a] & in) : in;
                 g_backup_dirty = 1;
+                g_backup_written = g_frame;
             }
             break;
         default:

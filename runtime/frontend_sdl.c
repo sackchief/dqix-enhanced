@@ -36,6 +36,7 @@
 #include "frontend.h"
 #include "gl_render.h"
 #include "discord.h"
+#include "autosave.h"
 #include "music.h"
 #include "text_hd.h"
 #include "menu.h"
@@ -567,6 +568,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "music_song_names")) g_mus_names = atoi(val) != 0;
         else if (!strcmp(key, "music_pack_volume")) { int v = atoi(val); if (v >= 0 && v <= 200) g_mus_vol = v; }
         else if (!strcmp(key, "discord")) g_discord = atoi(val) != 0;
+        else if (!strcmp(key, "autosave")) g_autosave = atoi(val) != 0;
         else if (!strcmp(key, "discord_app_id")) discord_set_app_id(val);
         else if (!strcmp(key, "upscale_textures")) g_tex_up = atoi(val) != 0;
         else if (!strcmp(key, "hd_text_shadows")) g_tx_shadows = atoi(val) != 0;
@@ -629,6 +631,8 @@ static void settings_save(void) {
     fprintf(f, "hd_text = %d\n", g_hd_text);
     fprintf(f, "# show on Discord what you're playing (when the Discord app is running): 0 or 1\n");
     fprintf(f, "discord = %d\n", g_discord);
+    fprintf(f, "# Modern > Save by itself every 10 minutes (on the field, while free to walk; not while playing with friends): 0 or 1\n");
+    fprintf(f, "autosave = %d\n", g_autosave);
     fprintf(f, "# Mods: texture packs (PNGs in the textures folder drawn instead of the game's): 0 or 1\n");
     fprintf(f, "texture_packs = %d\n", g_tex_pack);
     fprintf(f, "# Mods: music packs (OGG / FLAC recordings in the music folder played instead of the game's songs): 0 or 1\n");
@@ -1588,6 +1592,7 @@ static void menu_sync(void) {
     menu_check(MI_SMOOTH, g_smooth); menu_enable(MI_SMOOTH, g_gl && !g_classic);
     menu_check(MI_HD_TEXT, g_hd_text != 0); menu_enable(MI_HD_TEXT, g_gl != 0);
     menu_check(MI_DISCORD, g_discord && discord_available()); menu_enable(MI_DISCORD, discord_available());
+    menu_check(MI_AUTOSAVE, g_autosave); menu_enable(MI_AUTOSAVE, !session_requested());
     menu_check(MI_TEXPACK, g_tex_pack); menu_check(MI_TEXUP, g_tex_up); menu_check(MI_TEXDUMP, g_tex_dump);
     for (int i = MI_TEXPACK; i <= MI_TEXFOLDER; i++) menu_enable(i, g_gl != 0);
     menu_check(MI_MUSPACK, g_mus_pack); menu_check(MI_MUSNAMES, g_mus_names);
@@ -2398,6 +2403,7 @@ static void do_action(int id) {
         relayout = 1;
         break;
     case MI_HUD: g_hud = !g_hud; break;
+    case MI_AUTOSAVE: g_autosave = !g_autosave; break;
     case MI_FULL2: second_window_fullscreen(); break;
     case MI_LCD: if (g_gl) g_opt.lcd = !g_opt.lcd; g_fps_t0 = 0; break;
     case MI_LCDCOL: g_opt.lcd_color = !g_opt.lcd_color; break;
@@ -2477,6 +2483,9 @@ static void do_action(int id) {
             "Top screen in the corner: the field as on the DS (4:3), the top screen beside it.\n\n"
             "Two windows: one screen in each, to put them on two monitors (each can be fullscreen).\n\n"
             "Single screen (U or the left trigger): only one screen, as big as it gets; F9 or the right trigger shows the other one.\n\n"
+            "Save by itself every 10 minutes: the game saves as the priest would, wherever the party is, once the hero is free to walk "
+            "(never during a battle, a dialogue, a menu or a cut scene); Continue takes you back there. The 10 minutes count from the last "
+            "save, the church's too. It needs a save made once at a church first, and is off while playing with friends.\n\n"
             "All are also under View; F2 goes through the layouts.", g_win);
         break;
     case MI_SIZE1: case MI_SIZE2: case MI_SIZE3: case MI_SIZE4: g_scale = id - MI_SIZE1 + 1; relayout = 1; break;
@@ -2757,6 +2766,7 @@ void frontend_frame(void) {
         uint64_t tp = SDL_GetPerformanceCounter();
         present();
         pr->present = (float)ticks_ms(SDL_GetPerformanceCounter() - tp);
+        if (g_autosave_done) { g_autosave_done = 0; notice("Saved"); }   /* Modern > Save by itself */
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
             while (g_paused) { handle_events(); present(); SDL_Delay(15); }

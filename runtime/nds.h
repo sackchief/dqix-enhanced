@@ -182,6 +182,9 @@ const char* backup_path(void);
 void backup_flush(void);
 const uint8_t* backup_image(uint32_t* size);   /* the save as the game will see it */
 int backup_unlock_dlc(void);              /* downloadable quests + special guests (see card.c) */
+extern uint64_t g_backup_written;         /* the frame the game last wrote to its save chip */
+int backup_slot_valid(const uint8_t* slot);   /* a 32 KB save slot with its name and three CRC-32s right */
+void backup_store(uint32_t off, const uint8_t* p, uint32_t n);   /* write to the save chip; backup_flush writes the file (autosave.c) */
 void math_div(void);
 void math_sqrt(void);
 

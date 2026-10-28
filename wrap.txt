@@ -18,3 +18,8 @@ main 02045864 glyph_plain
 # memcpy: the tags of letters follow them when the game copies them itself
 # (the textures above go through a staging buffer).
 main 02001a40 memcpy
+
+# The field's frame (time of day, the map...): func_ov017_0218d0ec, once a
+# frame while on the field. Watched by autosave.c (Modern > Save by itself
+# every 10 minutes), which saves the adventure there, as the priest would.
+ov017 0218d0ec field_frame
