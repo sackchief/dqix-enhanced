@@ -12,21 +12,21 @@ CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/dqix-enhanced-appimage"
 ENV_DIR="$CACHE_ROOT/toolchain"
 
 die() {
-    printf 'DQIX Enhanced Builder: %s\n' "$*" >&2
+    printf 'DQIX Enhanced Linux Launcher: %s\n' "$*" >&2
     exit 1
 }
 
 usage() {
     cat <<EOF
-DQIX Enhanced Builder $VERSION
+DQIX Enhanced Linux Launcher $VERSION
 
-By default, opens a graphical window where you select your ROM (.nds),
-choose a workspace folder, build the game and follow progress.
+By default, opens the native SDL2 launcher where you select your ROM (.nds),
+choose a workspace folder, build the game, inspect settings and press Play.
 
 Usage:
-  $0                       Open the graphical builder
-  $0 --gui                 Open the graphical builder
-  $0 --self-test           Check the bundled Python, Tk, compiler and SDL2 toolchain
+  $0                       Open the native SDL2 launcher
+  $0 --gui                 Open the native SDL2 launcher
+  $0 --self-test           Check the bundled Python/compiler toolchain and native SDL2 launcher
   $0 --build-only ROM.nds  Build from ROM without launching the game
   $0 --rebuild [ROM.nds]   Rebuild from the ROM or the local workspace copy
   $0 ROM.nds               Build from ROM and launch the game
@@ -117,6 +117,13 @@ fi
 export LD_LIBRARY_PATH="$ENV_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONNOUSERSITE=1
 
+# Prepare host GLX compatibility metadata for the game child only. Do not
+# preload host GL libraries into the SDL2 builder UI itself.
+GL_COMPAT_HELPER="$BUNDLED_SOURCE/third_party/extra/linux/tools/linux-gl-compat.sh"
+[ -r "$GL_COMPAT_HELPER" ] || die "Linux OpenGL compatibility helper is missing"
+. "$GL_COMPAT_HELPER"
+dqix_linux_gl_prepare
+
 if command -v x86_64-conda-linux-gnu-cc >/dev/null 2>&1; then
     export CC="$(command -v x86_64-conda-linux-gnu-cc)"
 elif command -v x86_64-conda-linux-gnu-gcc >/dev/null 2>&1; then
@@ -129,16 +136,11 @@ fi
 
 if [ "$ACTION" = "self-test" ]; then
     "$ENV_DIR/bin/python3" -c '
-import ast
-from pathlib import Path
-import tkinter
-from tkinter import filedialog, ttk
+import sys
 import yaml
-gui = Path("'"$BUNDLED_SOURCE"'/packaging/linux/gui.py")
-ast.parse(gui.read_text(encoding="utf-8"))
-print("Python/Tk:", tkinter.TkVersion)
+print("Bundled Python:", sys.version.split()[0])
 print("PyYAML:", yaml.__version__)
-print("GUI source syntax: OK")
+print("Native SDL2 launcher path: checked below")
 '
     make --version | head -n 1
     sdl2-config --version
@@ -152,13 +154,30 @@ print("GUI source syntax: OK")
 int main(void) { return SDL_Init(0); }
 C
     "$CC" "${sdl_cflags[@]}" "$smoke_dir/sdl-smoke.c" "${sdl_libs[@]}" -o "$smoke_dir/sdl-smoke"
-    printf 'AppImage builder self-test passed.\n'
+    SDL_LDD_OUTPUT="$(ldd "$smoke_dir/sdl-smoke")"
+    printf '%s\n' "$SDL_LDD_OUTPUT"
+    if grep -F "not found" <<< "$SDL_LDD_OUTPUT"; then
+        die "the SDL smoke executable has unresolved dynamic dependencies"
+    fi
+    "$smoke_dir/sdl-smoke"
+
+    LAUNCHER="$PACKAGE_DIR/dqix-linux-ui-launcher"
+    [ -x "$LAUNCHER" ] || die "the bundled SDL2 launcher is missing or not executable"
+    LAUNCHER_HELP="$("$LAUNCHER" --help)"
+    printf '%s\n' "$LAUNCHER_HELP" | grep -F -- "--self-test" >/dev/null || die "the bundled launcher help check failed"
+    SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy "$LAUNCHER" \
+        --source-root "$BUNDLED_SOURCE" \
+        --default-workspace "$WORKSPACE" \
+        --version "$VERSION" --self-test
+    printf 'AppImage toolchain and native SDL2 launcher self-tests passed.\n'
     exit 0
 fi
 
 if [ "$ACTION" = "gui" ]; then
-    exec "$ENV_DIR/bin/python3" "$BUNDLED_SOURCE/packaging/linux/gui.py" \
-        --source "$BUNDLED_SOURCE" \
+    LAUNCHER="$PACKAGE_DIR/dqix-linux-ui-launcher"
+    [ -x "$LAUNCHER" ] || die "the bundled native SDL2 launcher is missing or not executable"
+    exec "$LAUNCHER" \
+        --source-root "$BUNDLED_SOURCE" \
         --default-workspace "$WORKSPACE" \
         --version "$VERSION"
 fi
@@ -175,7 +194,7 @@ if [ -z "$ROM" ]; then
         printf 'Path to your own DQIX .nds ROM: '
         IFS= read -r ROM
     else
-        die "this command needs a ROM path. Open the AppImage without arguments to use the graphical builder."
+        die "this command needs a ROM path. Open the AppImage without arguments to use the native SDL2 launcher."
     fi
 fi
 [ -f "$ROM" ] || die "ROM file not found: $ROM"

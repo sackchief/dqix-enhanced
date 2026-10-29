@@ -1,0 +1,107 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -820,24 +820,32 @@
+         return 0;
+     }
+     SDL_ClearError();
++    if(SDL_GL_LoadLibrary(NULL)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_LoadLibrary(default) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL library load failed: %s\n",g_gl_fallback_reason);
++        return 0;
++    }
++    SDL_ClearError();
+     if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3)!=0) {
+-        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(major version) failed: %.220s",SDL_GetError()); return 0;
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(major version) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
+     }
+     if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3)!=0) {
+-        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(minor version) failed: %.220s",SDL_GetError()); return 0;
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(minor version) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
+     }
+     if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE)!=0) {
+-        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(core profile) failed: %.220s",SDL_GetError()); return 0;
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(core profile) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
+     }
+     if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER,1)!=0) {
+-        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(double buffer) failed: %.220s",SDL_GetError()); return 0;
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(double buffer) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
+     }
+     SDL_ClearError();
+     g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,
+                            SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
+     if(!g_win) {
+         snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_CreateWindow(SDL_WINDOW_OPENGL) failed: %.220s",SDL_GetError());
+-        fprintf(stderr,"renderer-diagnostics: OpenGL window creation failed: %s\n",g_gl_fallback_reason); return 0;
++        fprintf(stderr,"renderer-diagnostics: OpenGL window creation failed: %s\n",g_gl_fallback_reason);
++        SDL_GL_UnloadLibrary();
++        return 0;
+     }
+     SDL_ClearError(); g_glctx=SDL_GL_CreateContext(g_win);
+     if(!g_glctx) {
+@@ -865,6 +873,57 @@
+     }
+     g_gl=1;g_renderer3d_verify=getenv("DQIX_GL_VERIFY")!=NULL;return 1;
+ }
++static int try_gl_with_x11_retry(void) {
++    const char* selected_driver=SDL_GetCurrentVideoDriver();
++    const char* requested_driver=getenv("SDL_VIDEODRIVER");
++    const char* x_display=getenv("DISPLAY");
++    char original_driver[64], wayland_reason[320], x11_reason[320];
++    static const char window_failure[]="SDL_CreateWindow(SDL_WINDOW_OPENGL) failed";
++
++    if(try_gl()) return 1;
++    if(strncmp(g_gl_fallback_reason,window_failure,sizeof window_failure-1)!=0 ||
++       !selected_driver || strcmp(selected_driver,"wayland")!=0 ||
++       (requested_driver&&requested_driver[0]) || !x_display || !x_display[0]) return 0;
++
++    snprintf(original_driver,sizeof original_driver,"%s",selected_driver);
++    snprintf(wayland_reason,sizeof wayland_reason,"%s",g_gl_fallback_reason);
++    fprintf(stderr,"renderer-diagnostics: retrying OpenGL with X11/XWayland after Wayland window failure: %s\n",wayland_reason);
++
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    (void)SDL_setenv("SDL_VIDEODRIVER","x11",1);
++    SDL_ClearError();
++    if(SDL_InitSubSystem(SDL_INIT_VIDEO)==0) {
++        if(try_gl()) {
++            fprintf(stderr,"renderer-diagnostics: OpenGL retry via X11 succeeded after Wayland failure: %s\n",wayland_reason);
++            return 1;
++        }
++        snprintf(x11_reason,sizeof x11_reason,"%s",g_gl_fallback_reason[0]?g_gl_fallback_reason:"OpenGL retry failed without a reported reason");
++    } else {
++        snprintf(x11_reason,sizeof x11_reason,"SDL_InitSubSystem(video, x11) failed: %.220s",SDL_GetError());
++    }
++
++    fprintf(stderr,"renderer-diagnostics: OpenGL retry via X11 failed: %s\n",x11_reason);
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    if(SDL_setenv("SDL_VIDEODRIVER",original_driver,1)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++                 "Wayland OpenGL failed (%.90s); X11 retry failed (%.90s); could not restore SDL_VIDEODRIVER",
++                 wayland_reason,x11_reason);
++        return 0;
++    }
++    SDL_ClearError();
++    if(SDL_InitSubSystem(SDL_INIT_VIDEO)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++                 "Wayland OpenGL failed (%.75s); X11 retry failed (%.75s); restoring Wayland failed: %.70s",
++                 wayland_reason,x11_reason,SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: video-driver restore failed: %s\n",SDL_GetError());
++        return 0;
++    }
++    snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++             "Wayland OpenGL failed (%.115s); X11 retry failed (%.115s)",wayland_reason,x11_reason);
++    fprintf(stderr,"renderer-diagnostics: restored video driver=%s; continuing with SDL_Renderer fallback\n",original_driver);
++    return 0;
++}
++
+ static const char* renderer_or_unknown(const char* s){return s&&s[0]?s:"(unavailable)";}
+ static void renderer_log_gl_attribute(const char* name,SDL_GLattr attr) {
+     int v=0; if(SDL_GL_GetAttribute(attr,&v)==0)fprintf(stderr,"renderer-diagnostics: gl.attribute.%s=%d\n",name,v);
+@@ -1075,7 +1134,7 @@
+     if (!g_headless) {
+         const char* sc = getenv("DQIX_SCALE");
+         if (sc) { g_scale = atoi(sc); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+-        if (!try_gl()) {
++        if (!try_gl_with_x11_retry()) {
+             if(!g_gl_fallback_reason[0])snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"OpenGL initialization failed without a specific reason");
+             SDL_ClearError();
+             g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);

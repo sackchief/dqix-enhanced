@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "platform": "linux-64",
+  "source_spec": "packaging/linux/environment.yml",
+  "source_spec_sha256": "8f0701ca304014c0c49c0d6e5ce8f577843caf22ff50a1a45bf250aabb55b866",
+  "lock_file": "packaging/linux/conda-linux-64.lock",
+  "lock_sha256": "5aeec2066f1d9fcfbf729de3ea6531559c8b9b0a31065a610059fb18793bae96",
+  "explicit_package_count": 96,
+  "generated_by": "micromamba env export --name dqix-builder --explicit",
+  "source_workflow_run": 40730463353,
+  "source_commit": "dbf93e0d287eaba5b0c42d45f66ec0d9c30c311e",
+  "generated_on": "2026-10-28",
+  "checksum_kind": "MD5 fragments in explicit package URLs; SHA-256 for the complete lockfile"
+}

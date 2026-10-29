@@ -1,0 +1,34 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -73,6 +73,8 @@
+ static int g_wide_pop;                                            /* widescreen: the small screen in its own window (the field alone) */
+ static int g_smooth = 0;                                          /* Enhanced: smooth (filtered) textures */
+ static int g_discord = 1;                                         /* Modern > Show on Discord what I'm playing (discord.c) */
++static char g_discord_app_id_override[64];
++static int g_discord_app_id_override_set;
+ static int g_tex_pack = 1, g_tex_up = 0, g_tex_dump = 0;           /* Mods (gl_render.c) */
+ static int g_mus_pack = 1, g_mus_names = 0, g_mus_vol = 70;      /* Mods: music packs (music.c) */
+ static int g_hd_text = 0;                                            /* Enhanced: the game's letters redrawn at full resolution (text_hd.h) */
+@@ -580,7 +582,11 @@
+         else if (!strcmp(key, "music_song_names")) g_mus_names = atoi(val) != 0;
+         else if (!strcmp(key, "music_pack_volume")) { int v = atoi(val); if (v >= 0 && v <= 200) g_mus_vol = v; }
+         else if (!strcmp(key, "discord")) g_discord = atoi(val) != 0;
++        else if (!strcmp(key, "discord_app_id")) {
++            snprintf(g_discord_app_id_override, sizeof g_discord_app_id_override, "%s", val);
++            g_discord_app_id_override_set = 1;
++            discord_set_app_id(val);
++        }
+-        else if (!strcmp(key, "discord_app_id")) discord_set_app_id(val);
+         else if (!strcmp(key, "upscale_textures")) g_tex_up = atoi(val) != 0;
+         else if (!strcmp(key, "hd_text_shadows")) g_tx_shadows = atoi(val) != 0;
+         else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
+@@ -642,6 +648,9 @@
+     fprintf(f, "hd_text = %d\n", g_hd_text);
+     fprintf(f, "# show on Discord what you're playing (when the Discord app is running): 0 or 1\n");
+     fprintf(f, "discord = %d\n", g_discord);
++    /* Preserve an explicit Discord application ID when runtime settings are saved. */
++    if (g_discord_app_id_override_set)
++        fprintf(f, "discord_app_id = %s\n", g_discord_app_id_override);
+     fprintf(f, "# Mods: texture packs (PNGs in the textures folder drawn instead of the game's): 0 or 1\n");
+     fprintf(f, "texture_packs = %d\n", g_tex_pack);
+     fprintf(f, "# Mods: music packs (OGG / FLAC recordings in the music folder played instead of the game's songs): 0 or 1\n");

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "upstream_revision": "b85da5d6f8a5580f737e5f96418f4b07a8083591",
+  "patches": [
+    "0001-renderer-diagnostics.patch",
+    "0002-linux-build-mirror.patch",
+    "0003-linux-build-entrypoint.patch",
+    "0004-linux-ingame-overlay.patch",
+    "0005-linux-settings-persistence.patch",
+    "0006-linux-overlay-aspect-fit.patch",
+    "0007-linux-wayland-opengl-retry.patch",
+    "0008-linux-opengl-host-library-preload.patch"
+  ],
+  "sources": [
+    {
+      "source_path": "runtime/frontend_sdl.c",
+      "mirror_path": "third_party/extra/linux/src/runtime/frontend_sdl.c",
+      "base_git_blob_sha1": "05d8f55885b870ca4dd9e384b1ff4bf924977f6c",
+      "mirror_git_blob_sha1": "22d5d0553dd809e5823550a85ab4de4ca1e3b73c"
+    },
+    {
+      "source_path": "build.mk",
+      "mirror_path": "third_party/extra/linux/src/build.mk",
+      "base_git_blob_sha1": "2ec7f067b55564a78d615a7ff224655624a2f197",
+      "mirror_git_blob_sha1": "c775658fdbb42ab4b7552795be57713591b6491d"
+    },
+    {
+      "source_path": "tools/build-game.sh",
+      "mirror_path": "third_party/extra/linux/src/tools/build-game.sh",
+      "base_git_blob_sha1": "8e5b9901f70acd7e1d3faaa2e72a66a183c86469",
+      "mirror_git_blob_sha1": "8d99feff05744f337d6dc101a4c313f715acf65c"
+    }
+  ]
+}

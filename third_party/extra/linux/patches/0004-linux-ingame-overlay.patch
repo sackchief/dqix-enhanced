@@ -1,0 +1,304 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -45,6 +45,10 @@
+ #include "update.h"
+ #include "text.h"
+ #include "controls.h"
++#ifndef _WIN32
++#include "../../overlay/linux_overlay.h"
++#include "../../overlay/linux_overlay_gl.h"
++#endif
+ #ifdef _WIN32
+ #include <windows.h>
+ #else
+@@ -103,6 +107,12 @@
+ static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
+ extern int g_comp_gl;
+ static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
++#ifndef _WIN32
++static int g_linux_overlay_open, g_linux_overlay_selection, g_linux_overlay_saved_paused;
++static uint8_t *g_linux_overlay_rgba;
++static SDL_Texture *g_linux_overlay_texture;
++static int g_linux_overlay_error_reported;
++#endif
+ static int g_ff_hold;           /* fast forward while Tab is held (0: Tab switches it on and off) */
+ 
+ /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
+@@ -1530,6 +1540,82 @@
+     }
+ }
+ 
++#ifndef _WIN32
++static const char *linux_overlay_renderer_name(void) {
++    SDL_RendererInfo info;
++    if (g_gl) return "OpenGL";
++    if (g_ren && SDL_GetRendererInfo(g_ren, &info) == 0 && info.name && info.name[0]) return info.name;
++    return "SDL_Renderer";
++}
++
++static const uint8_t *linux_overlay_pixels(void) {
++    const size_t bytes = (size_t)DQIX_LINUX_OVERLAY_WIDTH * DQIX_LINUX_OVERLAY_HEIGHT * 4;
++    if (!g_linux_overlay_open) return NULL;
++    if (!g_linux_overlay_rgba) {
++        g_linux_overlay_rgba = (uint8_t *)malloc(bytes);
++        if (!g_linux_overlay_rgba) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: cannot allocate the RGBA surface\n");
++            g_linux_overlay_error_reported = 1;
++            return NULL;
++        }
++    }
++    dqix_linux_overlay_render_rgba(g_linux_overlay_rgba, bytes, g_linux_overlay_selection,
++        g_classic, g_fullscreen, g_gl, linux_overlay_renderer_name());
++    return g_linux_overlay_rgba;
++}
++
++static void linux_overlay_draw_gl(SDL_Window *window) {
++    const uint8_t *pixels;
++    int width = 0, height = 0;
++    if (!g_linux_overlay_open || !g_gl || !window) return;
++    pixels = linux_overlay_pixels();
++    if (!pixels) return;
++    SDL_GL_GetDrawableSize(window, &width, &height);
++    if (!dqix_linux_overlay_gl_draw(pixels, DQIX_LINUX_OVERLAY_WIDTH, DQIX_LINUX_OVERLAY_HEIGHT,
++                                    width, height) && !g_linux_overlay_error_reported) {
++        fprintf(stderr, "linux-overlay: OpenGL draw failed; see earlier overlay diagnostics\n");
++        g_linux_overlay_error_reported = 1;
++    }
++}
++
++static void linux_overlay_draw_sdl(void) {
++    const uint8_t *pixels;
++    SDL_Rect destination;
++    int width = 0, height = 0, logical_width = 0, logical_height = 0;
++    if (!g_linux_overlay_open || g_gl || !g_ren) return;
++    pixels = linux_overlay_pixels();
++    if (!pixels) return;
++    if (!g_linux_overlay_texture) {
++        g_linux_overlay_texture = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_RGBA32,
++            SDL_TEXTUREACCESS_STREAMING, DQIX_LINUX_OVERLAY_WIDTH, DQIX_LINUX_OVERLAY_HEIGHT);
++        if (!g_linux_overlay_texture) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture creation failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++            return;
++        }
++        if (SDL_SetTextureBlendMode(g_linux_overlay_texture, SDL_BLENDMODE_BLEND) != 0) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture blend mode failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++        }
++    }
++    if (SDL_UpdateTexture(g_linux_overlay_texture, NULL, pixels, DQIX_LINUX_OVERLAY_WIDTH * 4) != 0) {
++        if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture update failed: %s\n", SDL_GetError());
++        g_linux_overlay_error_reported = 1;
++        return;
++    }
++    SDL_RenderGetLogicalSize(g_ren, &logical_width, &logical_height);
++    if (logical_width > 0 && logical_height > 0) { width = logical_width; height = logical_height; }
++    else if (SDL_GetRendererOutputSize(g_ren, &width, &height) != 0) return;
++    destination.x = destination.y = 0;
++    destination.w = width; destination.h = height;
++    if (SDL_RenderCopy(g_ren, g_linux_overlay_texture, NULL, &destination) != 0 &&
++        !g_linux_overlay_error_reported) {
++        fprintf(stderr, "linux-overlay: SDL_RenderCopy failed: %s\n", SDL_GetError());
++        g_linux_overlay_error_reported = 1;
++    }
++}
++#endif
++
+ static void present_gl(void) {
+     auto_scale();
+     present_gl_state();
+@@ -1594,12 +1680,18 @@
+         }
+     }
+     gl_present(&v);
++#ifndef _WIN32
++    linux_overlay_draw_gl(g_win);
++#endif
+     window_shot_hook(w, h, 0);
+     SDL_GL_SwapWindow(g_win);
+     if (g_win2 && SDL_GL_MakeCurrent(g_win2, g_glctx) == 0) {   /* two windows: the other screen */
+         int w2, h2; SDL_GL_GetDrawableSize(g_win2, &w2, &h2);
+         GlPresent v2; canvas_layout_for(&v2, w2, h2, 1); v2.again = 1;
+         gl_present(&v2);
++#ifndef _WIN32
++        linux_overlay_draw_gl(g_win2);
++#endif
+         window_shot_hook(w2, h2, 1);
+         SDL_GL_SwapWindow(g_win2);
+         SDL_GL_MakeCurrent(g_win, g_glctx);
+@@ -1628,6 +1720,9 @@
+         if (db.w > 0) SDL_RenderCopy(g_ren, g_tex, &bot, &db);
+     }
+     test_hooks();
++#ifndef _WIN32
++    linux_overlay_draw_sdl();
++#endif
+     SDL_RenderPresent(g_ren);
+ }
+ 
+@@ -2737,9 +2832,122 @@
+     g_pad_resync = 1;
+ }
+ 
++#ifndef _WIN32
++static void linux_overlay_move_selection(int delta) {
++    g_linux_overlay_selection = (g_linux_overlay_selection + delta + 4) % 4;
++}
++
++static void linux_overlay_close(int resume_game) {
++    g_linux_overlay_open = 0;
++    g_paused = resume_game ? 0 : g_linux_overlay_saved_paused;
++    g_next_frame = SDL_GetPerformanceCounter();
++    g_fps_t0 = 0;
++    g_pad_resync = 1;
++}
++
++static void linux_overlay_activate(void) {
++    switch (g_linux_overlay_selection) {
++    case 0:
++        linux_overlay_close(1);
++        break;
++    case 1:
++        if (g_gl) do_action(g_classic ? MI_ENHANCED : MI_CLASSIC);
++        else notice("Enhanced mode requires OpenGL");
++        break;
++    case 2:
++        do_action(MI_FULL);
++        break;
++    case 3:
++        quit_ask();
++        break;
++    }
++}
++
++static int linux_overlay_handle_event(const SDL_Event *event) {
++    static int axis_y_latched;
++    if (event->type == SDL_KEYDOWN && !event->key.repeat &&
++        event->key.keysym.scancode == SDL_SCANCODE_ESCAPE && g_cap_action < 0 &&
++        g_win && !g_headless) {
++        if (g_linux_overlay_open) linux_overlay_close(0);
++        else {
++            g_linux_overlay_open = 1;
++            g_linux_overlay_selection = 0;
++            g_linux_overlay_saved_paused = g_paused;
++            g_paused = 1;
++            g_next_frame = SDL_GetPerformanceCounter();
++            g_pad_resync = 1;
++        }
++        return 1;
++    }
++    if (!g_linux_overlay_open) return 0;
++
++    switch (event->type) {
++    case SDL_KEYUP:
++        return 1;
++    case SDL_KEYDOWN:
++        if (event->key.repeat) return 1;
++        switch (event->key.keysym.sym) {
++        case SDLK_UP: linux_overlay_move_selection(-1); break;
++        case SDLK_DOWN: linux_overlay_move_selection(1); break;
++        case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE:
++            linux_overlay_activate(); break;
++        default: break;
++        }
++        return 1;
++    case SDL_CONTROLLERBUTTONUP:
++        return 1;
++    case SDL_CONTROLLERBUTTONDOWN:
++        switch (event->cbutton.button) {
++        case SDL_CONTROLLER_BUTTON_DPAD_UP: linux_overlay_move_selection(-1); break;
++        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: linux_overlay_move_selection(1); break;
++        case SDL_CONTROLLER_BUTTON_A: linux_overlay_activate(); break;
++        case SDL_CONTROLLER_BUTTON_B: linux_overlay_close(0); break;
++        default: break;
++        }
++        return 1;
++    case SDL_CONTROLLERAXISMOTION:
++        if (event->caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
++            if (!axis_y_latched && event->caxis.value < -16000) {
++                linux_overlay_move_selection(-1); axis_y_latched = 1;
++            } else if (!axis_y_latched && event->caxis.value > 16000) {
++                linux_overlay_move_selection(1); axis_y_latched = 1;
++            } else if (event->caxis.value > -7000 && event->caxis.value < 7000) axis_y_latched = 0;
++        }
++        return 1;
++    case SDL_MOUSEBUTTONDOWN:
++    case SDL_MOUSEBUTTONUP:
++        if (event->type == SDL_MOUSEBUTTONUP && event->button.button == SDL_BUTTON_LEFT) {
++            int ww = 0, wh = 0, ox = event->button.x, oy = event->button.y;
++            SDL_GetWindowSize(g_win, &ww, &wh);
++            if (ww > 0 && wh > 0) {
++                ox = ox * DQIX_LINUX_OVERLAY_WIDTH / ww;
++                oy = oy * DQIX_LINUX_OVERLAY_HEIGHT / wh;
++                if (ox >= DQIX_LINUX_OVERLAY_ROW_X &&
++                    ox < DQIX_LINUX_OVERLAY_ROW_X + DQIX_LINUX_OVERLAY_ROW_WIDTH) {
++                    for (int row = 0; row < 4; ++row) {
++                        int y = DQIX_LINUX_OVERLAY_ROW0 + row * DQIX_LINUX_OVERLAY_ROW_STEP;
++                        if (oy >= y - 12 && oy < y + DQIX_LINUX_OVERLAY_ROW_HEIGHT - 12) {
++                            g_linux_overlay_selection = row;
++                            linux_overlay_activate();
++                            break;
++                        }
++                    }
++                }
++            }
++        }
++        return 1;
++    default:
++        return 0;
++    }
++}
++#endif
++
+ static void handle_events(void) {
+     SDL_Event e;
+     while (SDL_PollEvent(&e)) {
++#ifndef _WIN32
++        if (linux_overlay_handle_event(&e)) continue;
++#endif
+         int mi = menu_command(&e);
+         if (mi) { do_action(mi); continue; }
+         switch (e.type) {
+@@ -2920,1 +3128,10 @@
+-void frontend_shutdown(void) {}
++void frontend_shutdown(void) {
++#ifndef _WIN32
++    if (g_gl && g_win && g_glctx) (void)SDL_GL_MakeCurrent(g_win, g_glctx);
++    dqix_linux_overlay_gl_shutdown();
++    if (g_linux_overlay_texture) SDL_DestroyTexture(g_linux_overlay_texture);
++    g_linux_overlay_texture = NULL;
++    free(g_linux_overlay_rgba);
++    g_linux_overlay_rgba = NULL;
++#endif
++}
+--- a/build.mk
++++ b/build.mk
+@@ -35,7 +35,7 @@
+ 
+ GENOBJ = $(patsubst $(GEN)/%.c,$(OBJ)/gen/%.o,$(wildcard $(GEN)/*.c))
+ GEN7OBJ = $(patsubst $(GEN7)/%.c,$(OBJ)/gen7/%.o,$(wildcard $(GEN7)/*.c))
++RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter runtime/%,$(RT))) $(if $(filter third_party/extra/linux/src/runtime/frontend_sdl.c,$(RT)),$(OBJ)/rt/frontend_sdl.o $(OBJ)/rt/linux_overlay.o $(OBJ)/rt/linux_overlay_gl.o)
+-RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter runtime/%,$(RT))) $(if $(filter third_party/extra/linux/src/runtime/frontend_sdl.c,$(RT)),$(OBJ)/rt/frontend_sdl.o)
+ 
+ # RES: optional extra objects for the program only, e.g. the Windows icon
+ # resource the build makes from the ROM (tools/rom_icon.py)
+@@ -88,10 +88,18 @@
+ 	@mkdir -p $(dir $@)
+ 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+ 
++$(OBJ)/rt/frontend_sdl.o: third_party/extra/linux/src/runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h third_party/extra/linux/overlay/linux_overlay.h third_party/extra/linux/overlay/linux_overlay_gl.h
+-$(OBJ)/rt/frontend_sdl.o: third_party/extra/linux/src/runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
+ 	@mkdir -p $(dir $@)
+ 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+ 
++$(OBJ)/rt/linux_overlay.o: third_party/extra/linux/overlay/linux_overlay.c third_party/extra/linux/overlay/linux_overlay.h
++	@mkdir -p $(dir $@)
++	$(CC) -O2 -g -Wall $(PIC) -Ithird_party/extra/linux/overlay -c $< -o $@
++
++$(OBJ)/rt/linux_overlay_gl.o: third_party/extra/linux/overlay/linux_overlay_gl.c third_party/extra/linux/overlay/linux_overlay_gl.h third_party/extra/linux/overlay/linux_overlay.h
++	@mkdir -p $(dir $@)
++	$(CC) -O2 -g -Wall $(PIC) $(SDL_CFLAGS) -Ithird_party/extra/linux/overlay -c $< -o $@
++
+ # Sessions need every PC to compute exactly the same: no stack garbage in uninitialised variables.
+ DETERMINISM ?= -ftrivial-auto-var-init=zero
+ $(OBJ)/rt/relay.o: runtime/relay.h runtime/relay_url.h

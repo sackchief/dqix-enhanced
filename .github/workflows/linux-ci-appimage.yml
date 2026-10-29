@@ -20,19 +20,27 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
       - name: Install test toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y build-essential clang lld llvm
+          sudo apt-get install --no-install-recommends -y build-essential clang lld llvm patch
           clang --version
           python -m pip install --disable-pip-version-check "PyYAML==6.0.2"
+
+      - name: Verify patch-derived Linux source mirror
+        run: |
+          set -euo pipefail
+          python3 third_party/extra/linux/tools/sync_linux_sources.py --check
+
+      - name: Verify locked Conda environment specification
+        run: python tests/packaging/test_conda_lock.py
 
       - name: Check Python and shell syntax
         run: |
@@ -51,21 +59,33 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install AppImage packaging utilities
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libfuse2 rsync squashfs-tools
+          sudo apt-get install --no-install-recommends -y cmake ninja-build desktop-file-utils libfuse2 rsync squashfs-tools
+
+      - name: Verify committed Conda lock checksum
+        run: sha256sum --check packaging/linux/conda-linux-64.lock.sha256
 
       - name: Set up pinned build environment (cached)
-        uses: mamba-org/setup-micromamba@v3
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3
         with:
-          environment-file: packaging/linux/environment.yml
-          create-args: --strict-channel-priority
+          environment-file: packaging/linux/conda-linux-64.lock
+          environment-name: dqix-builder
           cache-environment: true
           cache-downloads: true
           init-shell: bash
+
+      - name: Verify installed environment matches committed lock
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          micromamba env export --name dqix-builder --explicit > "$RUNNER_TEMP/resolved-conda-linux-64.lock"
+          diff -u \
+            <(grep -E '^https?://' packaging/linux/conda-linux-64.lock | LC_ALL=C sort) \
+            <(grep -E '^https?://' "$RUNNER_TEMP/resolved-conda-linux-64.lock" | LC_ALL=C sort)
 
       - name: Pack the relocatable build toolchain
         shell: bash -el {0}
@@ -75,7 +95,7 @@ jobs:
           tar -tzf "$RUNNER_TEMP/toolchain.tar.gz" >/dev/null
 
       - name: Restore or download pinned appimagetool
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/appimagetool
           key: appimagetool-1.9.0-x86_64-46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1
@@ -105,31 +125,8 @@ jobs:
           mkdir -p "$PACKAGE_DIR/source" \
             "$APPDIR/usr/share/icons/hicolor/scalable/apps" dist
 
-          rsync -a --delete \
-            --exclude='/.git/' \
-            --exclude='/.github/' \
-            --exclude='/tests/' \
-            --exclude='/build/' \
-            --exclude='/game/' \
-            --exclude='/rom/' \
-            --exclude='/extract/' \
-            --exclude='/obj/' \
-            --exclude='/gen/' \
-            --exclude='/gen7/' \
-            --exclude='/release/' \
-            --exclude='/wfc/' \
-            --exclude='*.nds' \
-            --exclude='*.sav' \
-            --exclude='*.o' \
-            --exclude='*.exe' \
-            --exclude='*.dll' \
-            --exclude='*.so' \
-            --exclude='*.ppm' \
-            --exclude='*.bmp' \
-            --exclude='*.wav' \
-            --exclude='*.pyc' \
-            --exclude='__pycache__/' \
-            --exclude='reports/' \
+          rsync -a \
+            --filter="merge $GITHUB_WORKSPACE/packaging/linux/appimage-filter.txt" \
             ./ "$PACKAGE_DIR/source/"
 
           cp packaging/linux/AppRun "$APPDIR/AppRun"
@@ -140,24 +137,66 @@ jobs:
             "$APPDIR/usr/share/icons/hicolor/scalable/apps/dqix-enhanced-builder.svg"
           cp "$RUNNER_TEMP/toolchain.tar.gz" "$PACKAGE_DIR/toolchain.tar.gz"
 
+          # Build the launcher against the same locked Conda SDL2 that is
+          # bundled in this AppImage. Keep compiler objects outside the AppDir.
+          LAUNCHER_BUILD_DIR="$RUNNER_TEMP/dqix-linux-launcher-build"
+          echo "Building SDL2 launcher against Conda SDL2 $(pkg-config --modversion sdl2)"
+          env -u LDFLAGS -u CFLAGS -u CXXFLAGS -u CPPFLAGS cmake \
+            -S third_party/extra/linux -B "$LAUNCHER_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_SKIP_RPATH=ON
+          cmake --build "$LAUNCHER_BUILD_DIR" --verbose
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          ctest --test-dir "$LAUNCHER_BUILD_DIR" --output-on-failure
+          "$LAUNCHER_BUILD_DIR/dqix-linux-ui-launcher" --help
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+            "$LAUNCHER_BUILD_DIR/dqix-linux-ui-launcher" --self-test
+          LAUNCHER_RPATH="$(readelf -d "$LAUNCHER_BUILD_DIR/dqix-linux-ui-launcher" | grep -E '\(RPATH|RUNPATH\)' || true)"
+          printf '%s\n' "$LAUNCHER_RPATH" > "$RUNNER_TEMP/dqix-linux-launcher-rpath.txt"
+          if grep -F "$CONDA_PREFIX" <<< "$LAUNCHER_RPATH"; then
+            echo "SDL2 launcher contains a non-portable build-time Conda RPATH." >&2
+            exit 1
+          fi
+          LAUNCHER_LDD="$(ldd "$LAUNCHER_BUILD_DIR/dqix-linux-ui-launcher")"
+          printf '%s\n' "$LAUNCHER_LDD" > "$RUNNER_TEMP/dqix-linux-launcher-ldd.txt"
+          if grep -F "not found" <<< "$LAUNCHER_LDD"; then
+            echo "SDL2 launcher has unresolved dynamic dependencies." >&2
+            exit 1
+          fi
+          install -m 0755 "$LAUNCHER_BUILD_DIR/dqix-linux-ui-launcher" \
+            "$PACKAGE_DIR/dqix-linux-ui-launcher"
+
           VERSION="$(awk -F '"' '/DQIX_VERSION / {print $2; exit}' runtime/version.h)"
           test -n "$VERSION"
           printf '%s\n' "$VERSION" > "$PACKAGE_DIR/APP_VERSION"
           sha256sum "$PACKAGE_DIR/toolchain.tar.gz" | awk '{print $1}' > "$PACKAGE_DIR/toolchain.sha256"
 
-          # Do not bundle user data or generated game code. The AppImage is a
-          # portable builder and creates the game locally from the user's ROM.
-          if find "$PACKAGE_DIR/source" -type f \( -name '*.nds' -o -name '*.sav' -o -name '*.o' -o -name '*.so' -o -name '*.exe' \) -print -quit | grep -q .; then
-            echo "Unexpected ROM/save/generated binary in AppDir source tree" >&2
+          # Exclusions are defense in depth in addition to the allowlist.
+          if find "$APPDIR" -type f \( -iname '*.nds' -o -iname '*.sav' -o -iname '*.dsv' -o -iname '*.srm' -o -iname '*.sra' -o -iname '*.o' -o -iname '*.exe' -o -iname '*.dll' -o -iname '*.so' -o -iname '*.ppm' -o -iname '*.bmp' -o -iname '*.wav' -o -iname '*.pyc' \) -print -quit | grep -q .; then
+            echo "Forbidden ROM/save/build binary or private asset found in AppDir" >&2
+            exit 1
+          fi
+          if find "$PACKAGE_DIR/source" -type d \( -iname game -o -iname build -o -iname extract -o -iname rom -o -iname testbuild -o -iname test-build -o -iname obj -o -iname gen -o -iname gen7 -o -iname Mods -o -iname mods -o -iname music -o -iname textures -o -iname wfc -o -iname release -o -iname reports \) -print -quit | grep -q .; then
+            echo "Forbidden private build/workspace directory found in AppDir source" >&2
+            exit 1
+          fi
+          if find "$PACKAGE_DIR/source" -type f -iname '*.bin' ! -path "$PACKAGE_DIR/source/fonts/labels.bin" -print -quit | grep -q .; then
+            echo "Unapproved binary asset found in AppDir source" >&2
             exit 1
           fi
 
           echo "Project version: $VERSION" > dist/build-info.txt
           echo "Source commit: $GITHUB_SHA" >> dist/build-info.txt
           echo "Target: Linux x86_64; build host: Ubuntu 22.04" >> dist/build-info.txt
-          echo "Toolchain: packaging/linux/environment.yml, packed with conda-pack" >> dist/build-info.txt
+          echo "Toolchain: packaging/linux/conda-linux-64.lock, packed with conda-pack" >> dist/build-info.txt
+          LOCK_SHA256="$(sha256sum packaging/linux/conda-linux-64.lock | awk '{print $1}')"
+          TOOLCHAIN_SHA256="$(sha256sum "$PACKAGE_DIR/toolchain.tar.gz" | awk '{print $1}')"
+          echo "Conda lock SHA-256: $LOCK_SHA256" >> dist/build-info.txt
+          echo "Toolchain archive SHA-256: $TOOLCHAIN_SHA256" >> dist/build-info.txt
           echo "ROM and prebuilt game: not included; build occurs on the user's machine" >> dist/build-info.txt
           echo "AppImage tool: appimagetool 1.9.0 (sha256 46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1)" >> dist/build-info.txt
+
+      - name: Test AppImage payload policy with synthetic sentinels
+        run: python tests/packaging/test_appimage_payload.py
 
       - name: Build AppImage
         shell: bash -el {0}
@@ -168,23 +207,116 @@ jobs:
             "$GITHUB_WORKSPACE/dist/DQIX-Enhanced-Builder-x86_64.AppImage"
           chmod +x dist/DQIX-Enhanced-Builder-x86_64.AppImage
 
-      - name: Smoke-test bundled toolchain
+      - name: Smoke-test AppImage CLI, cold/warm cache, and failure safety
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           HOME: ${{ runner.temp }}/appimage-home
           XDG_CACHE_HOME: ${{ runner.temp }}/appimage-cache
           XDG_DATA_HOME: ${{ runner.temp }}/appimage-data
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
-          ./dist/DQIX-Enhanced-Builder-x86_64.AppImage --self-test
+          IMAGE=./dist/DQIX-Enhanced-Builder-x86_64.AppImage
+          EXPECTED_VERSION="$(awk -F '"' '/DQIX_VERSION / {print $2; exit}' runtime/version.h)"
+          ACTUAL_VERSION="$("$IMAGE" --version)"
+          test "$ACTUAL_VERSION" = "$EXPECTED_VERSION"
+          printf 'AppImage --version: %s\n' "$ACTUAL_VERSION"
+          HELP_OUTPUT="$("$IMAGE" --help)"
+          printf '%s\n' "$HELP_OUTPUT" | grep -F -- "--self-test" >/dev/null
+          printf 'AppImage --help: passed\n'
 
-      - name: Generate checksums
+          CACHE_ROOT="$XDG_CACHE_HOME/dqix-enhanced-appimage"
+          TOOLCHAIN_DIR="$CACHE_ROOT/toolchain"
+          test ! -e "$TOOLCHAIN_DIR"
+          echo "Testing first startup with an empty toolchain cache"
+          COLD_START_NS="$(date +%s%N)"
+          "$IMAGE" --self-test
+          COLD_END_NS="$(date +%s%N)"
+          COLD_SECONDS="$(python -c 'import sys; print(f"{(int(sys.argv[2])-int(sys.argv[1]))/1e9:.3f}")' "$COLD_START_NS" "$COLD_END_NS")"
+          test -x "$TOOLCHAIN_DIR/bin/python3"
+          test -f "$TOOLCHAIN_DIR/.toolchain-sha256"
+          EXPECTED_TOOLCHAIN_SHA="$(cat "$RUNNER_TEMP/DQIX-Enhanced.AppDir/usr/share/dqix-enhanced/toolchain.sha256")"
+          test "$(cat "$TOOLCHAIN_DIR/.toolchain-sha256")" = "$EXPECTED_TOOLCHAIN_SHA"
+          MARKER_STAT_BEFORE="$(stat -c '%i:%s:%y' "$TOOLCHAIN_DIR/.toolchain-sha256")"
+          echo "Testing second startup with the populated toolchain cache"
+          WARM_START_NS="$(date +%s%N)"
+          "$IMAGE" --self-test
+          WARM_END_NS="$(date +%s%N)"
+          WARM_SECONDS="$(python -c 'import sys; print(f"{(int(sys.argv[2])-int(sys.argv[1]))/1e9:.3f}")' "$WARM_START_NS" "$WARM_END_NS")"
+          MARKER_STAT_AFTER="$(stat -c '%i:%s:%y' "$TOOLCHAIN_DIR/.toolchain-sha256")"
+          test "$MARKER_STAT_BEFORE" = "$MARKER_STAT_AFTER"
+          printf 'AppImage first startup (cold cache): %s seconds\n' "$COLD_SECONDS"
+          printf 'AppImage second startup (warm cache): %s seconds\n' "$WARM_SECONDS"
+          printf 'AppImage first startup (cold cache): %s seconds\n' "$COLD_SECONDS" >> "$GITHUB_STEP_SUMMARY"
+          printf 'AppImage second startup (warm cache): %s seconds\n' "$WARM_SECONDS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cold start, warm start, and toolchain marker stability: passed"
+
+          CORRUPT_APPDIR="$RUNNER_TEMP/DQIX-Enhanced-Corrupt.AppDir"
+          cp -a "$RUNNER_TEMP/DQIX-Enhanced.AppDir" "$CORRUPT_APPDIR"
+          CORRUPT_PACKAGE="$CORRUPT_APPDIR/usr/share/dqix-enhanced"
+          printf 'corruption-sentinel' >> "$CORRUPT_PACKAGE/toolchain.tar.gz"
+          CORRUPT_HOME="$RUNNER_TEMP/appimage-corrupt-home"
+          CORRUPT_CACHE="$RUNNER_TEMP/appimage-corrupt-cache"
+          CORRUPT_DATA="$RUNNER_TEMP/appimage-corrupt-data"
+          mkdir -p "$CORRUPT_HOME" "$CORRUPT_CACHE" "$CORRUPT_DATA"
+          set +e
+          APPDIR="$CORRUPT_APPDIR" HOME="$CORRUPT_HOME" XDG_CACHE_HOME="$CORRUPT_CACHE" XDG_DATA_HOME="$CORRUPT_DATA" \
+            "$CORRUPT_APPDIR/AppRun" --self-test > "$RUNNER_TEMP/corrupt-toolchain.log" 2>&1
+          CORRUPT_STATUS=$?
+          set -e
+          test "$CORRUPT_STATUS" -ne 0
+          grep -F "bundled toolchain checksum does not match" "$RUNNER_TEMP/corrupt-toolchain.log"
+          echo "Corrupted toolchain archive is rejected: passed"
+
+          WORKSPACE="$XDG_DATA_HOME/dqix-enhanced-linux/workspace"
+          mkdir -p "$WORKSPACE"
+          printf 'workspace-sentinel-must-survive\n' > "$WORKSPACE/keep.txt"
+          set +e
+          "$RUNNER_TEMP/DQIX-Enhanced.AppDir/AppRun" --build-only "$RUNNER_TEMP/does-not-exist.nds" \
+            > "$RUNNER_TEMP/missing-rom.log" 2>&1
+          MISSING_ROM_STATUS=$?
+          set -e
+          test "$MISSING_ROM_STATUS" -ne 0
+          grep -F "ROM file not found" "$RUNNER_TEMP/missing-rom.log"
+          test "$(cat "$WORKSPACE/keep.txt")" = "workspace-sentinel-must-survive"
+          echo "Invalid ROM leaves pre-existing workspace sentinel untouched: passed"
+
+      - name: Audit ELF dependencies, size, and Conda SBOM
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          HOME: ${{ runner.temp }}/appimage-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/appimage-cache
+          XDG_DATA_HOME: ${{ runner.temp }}/appimage-data
+        shell: bash -el {0}
         run: |
+          set -euo pipefail
+          APPDIR="$RUNNER_TEMP/DQIX-Enhanced.AppDir"
+          PACKAGE_DIR="$APPDIR/usr/share/dqix-enhanced"
+          TOOLCHAIN_DIR="$XDG_CACHE_HOME/dqix-enhanced-appimage/toolchain"
+          test -x "$TOOLCHAIN_DIR/bin/python3"
+          SOURCE_TIMESTAMP="$(git show -s --format=%cI "$GITHUB_SHA")"
+          python tools/packaging/audit_appimage.py \
+            --appdir "$APPDIR" \
+            --appimage "$GITHUB_WORKSPACE/dist/DQIX-Enhanced-Builder-x86_64.AppImage" \
+            --toolchain-dir "$TOOLCHAIN_DIR" \
+            --toolchain-archive "$PACKAGE_DIR/toolchain.tar.gz" \
+            --lock packaging/linux/conda-linux-64.lock \
+            --source-sha "$GITHUB_SHA" \
+            --version "$(awk -F '"' '/DQIX_VERSION / {print $2; exit}' runtime/version.h)" \
+            --timestamp "$SOURCE_TIMESTAMP" \
+            --out-dir "$GITHUB_WORKSPACE/dist"
+          (cd dist && sha256sum --check DIAGNOSTICS-SHA256SUMS)
+
+      - name: Generate and verify checksums
+        run: |
+          set -euo pipefail
           cd dist
           sha256sum DQIX-Enhanced-Builder-x86_64.AppImage build-info.txt > SHA256SUMS
+          sha256sum --check SHA256SUMS
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dqix-enhanced-appimage
           path: |
@@ -194,3 +326,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      - name: Upload AppImage diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dqix-enhanced-appimage-diagnostics
+          path: |
+            dist/elf-audit.json
+            dist/size-report.json
+            dist/sbom.cdx.json
+            dist/DIAGNOSTICS-SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6

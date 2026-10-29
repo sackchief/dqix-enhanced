@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=DQIX Enhanced Builder
-Comment=Build DQIX Enhanced locally from your own ROM
+Name=DQIX Enhanced Linux Launcher
+Comment=Build, configure and launch DQIX Enhanced from your own ROM
 Exec=AppRun
 Icon=dqix-enhanced-builder
 Terminal=false

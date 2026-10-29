@@ -1,0 +1,212 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -92,6 +92,9 @@
+ static int g_headless;          /* DQIX_NOWINDOW: run without a window (still uses SDL audio off) */
+ static int g_hidden;            /* another player's console in a session: no window, no sound, no pacing */
+ static int g_gl;                /* OpenGL renderer active (else SDL_Renderer + software 3D) */
++static char g_gl_fallback_reason[320], g_sdl_window_failure[320];
++static char g_sdl_renderer_accelerated_error[320], g_sdl_renderer_software_error[320], g_sdl_texture_failure[320];
++static int g_gl_swap_interval_set_result = -2, g_gl_swap_interval_actual = -2;
+ static SDL_GLContext g_glctx;
+ static int g_scale3d = 2;
+ extern void (*g_report_capture)(uint32_t out[2][256 * 192]);
+@@ -790,36 +793,138 @@
+ 
+ /* OpenGL: a 3.3 core context; on any failure fall back to SDL_Renderer + software 3D. */
+ static int try_gl(void) {
+-    if (getenv("DQIX_SOFTWARE")) return 0;
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+-    g_win = SDL_CreateWindow("Dragon Quest IX", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * g_scale, 384 * g_scale,
+-                             SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+-    if (!g_win) return 0;
+-    g_glctx = SDL_GL_CreateContext(g_win);
+-    if (!g_glctx) { fprintf(stderr, "OpenGL 3.3 not available (%s): using the software renderer\n", SDL_GetError()); SDL_DestroyWindow(g_win); g_win = NULL; return 0; }
+-    SDL_GL_SetSwapInterval(0);                                   /* pacing follows the audio clock */
+-    const char* e = getenv("DQIX_SCALE3D");
+-    if (e) { g_scale3d = atoi(e); g_res_auto = 0; }
+-    if (getenv("DQIX_SMOOTH")) g_smooth = atoi(getenv("DQIX_SMOOTH")) != 0;   /* tests */
+-    if (getenv("DQIX_OUTLINE")) g_gl_outline = atoi(getenv("DQIX_OUTLINE"));   /* tests: 1 thin, 2 medium, 0 DS */
+-    if (getenv("DQIX_SOFTALPHA")) g_gl_soft_alpha = atoi(getenv("DQIX_SOFTALPHA"));   /* tests */
+-    if (getenv("DQIX_SOFTSHADE")) g_gl_soft_shade = atoi(getenv("DQIX_SOFTSHADE"));   /* tests */
++    g_gl_fallback_reason[0]=g_sdl_window_failure[0]=0;
++    g_sdl_renderer_accelerated_error[0]=g_sdl_renderer_software_error[0]=g_sdl_texture_failure[0]=0;
++    g_gl_swap_interval_set_result=g_gl_swap_interval_actual=-2;
++    if(getenv("DQIX_SOFTWARE")) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"DQIX_SOFTWARE is set; OpenGL was deliberately skipped");
++        return 0;
++    }
++    SDL_ClearError();
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(major version) failed: %.220s",SDL_GetError()); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(minor version) failed: %.220s",SDL_GetError()); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(core profile) failed: %.220s",SDL_GetError()); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER,1)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(double buffer) failed: %.220s",SDL_GetError()); return 0;
++    }
++    SDL_ClearError();
++    g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,
++                           SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
++    if(!g_win) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_CreateWindow(SDL_WINDOW_OPENGL) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL window creation failed: %s\n",g_gl_fallback_reason); return 0;
++    }
++    SDL_ClearError(); g_glctx=SDL_GL_CreateContext(g_win);
++    if(!g_glctx) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_CreateContext(OpenGL 3.3 core) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL context creation failed: %s\n",g_gl_fallback_reason);
++        SDL_DestroyWindow(g_win);g_win=NULL;return 0;
++    }
++    g_gl_swap_interval_set_result=SDL_GL_SetSwapInterval(0);
++    g_gl_swap_interval_actual=SDL_GL_GetSwapInterval();
++    const char* e=getenv("DQIX_SCALE3D"); if(e){g_scale3d=atoi(e);g_res_auto=0;}
++    if(getenv("DQIX_SMOOTH"))g_smooth=atoi(getenv("DQIX_SMOOTH"))!=0;
++    if(getenv("DQIX_OUTLINE"))g_gl_outline=atoi(getenv("DQIX_OUTLINE"));
++    if(getenv("DQIX_SOFTALPHA"))g_gl_soft_alpha=atoi(getenv("DQIX_SOFTALPHA"));
++    if(getenv("DQIX_SOFTSHADE"))g_gl_soft_shade=atoi(getenv("DQIX_SOFTSHADE"));
+     gl_set_smooth(g_smooth);
+-    if (getenv("DQIX_HDTEXT")) g_hd_text = atoi(getenv("DQIX_HDTEXT")) != 0;   /* tests */
+-    gl_hd_fonts(getenv("DQIX_TXFONTS") ? getenv("DQIX_TXFONTS") : "fonts");   /* (tests: replays run elsewhere) */
+-    gl_set_hd_text(g_hd_text);
+-    gl_set_texture_pack(g_tex_pack); gl_set_tex_upscale(g_tex_up);
+-    if (!gl_render_init(g_res_auto ? (getenv("DQIX_AUTO_FROM") ? 2 : 4) : g_scale3d)) {
+-        fprintf(stderr, "OpenGL renderer failed to start: using the software renderer\n");
+-        SDL_GL_DeleteContext(g_glctx); SDL_DestroyWindow(g_win); g_win = NULL; return 0;
++    if(getenv("DQIX_HDTEXT"))g_hd_text=atoi(getenv("DQIX_HDTEXT"))!=0;
++    gl_hd_fonts(getenv("DQIX_TXFONTS")?getenv("DQIX_TXFONTS"):"fonts");
++    gl_set_hd_text(g_hd_text);gl_set_texture_pack(g_tex_pack);gl_set_tex_upscale(g_tex_up);
++    SDL_ClearError();
++    if(!gl_render_init(g_res_auto?(getenv("DQIX_AUTO_FROM")?2:4):g_scale3d)) {
++        const char* error=SDL_GetError();
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"gl_render_init failed (SDL_GetError=%s)",error&&error[0]?error:"no SDL error reported");
++        fprintf(stderr,"renderer-diagnostics: OpenGL renderer initialization failed: %s\n",g_gl_fallback_reason);
++        SDL_GL_DeleteContext(g_glctx);g_glctx=NULL;SDL_DestroyWindow(g_win);g_win=NULL;return 0;
+     }
+-    g_gl = 1;
+-    g_renderer3d_verify = getenv("DQIX_GL_VERIFY") != NULL;
+-    return 1;
++    g_gl=1;g_renderer3d_verify=getenv("DQIX_GL_VERIFY")!=NULL;return 1;
+ }
++static const char* renderer_or_unknown(const char* s){return s&&s[0]?s:"(unavailable)";}
++static void renderer_log_gl_attribute(const char* name,SDL_GLattr attr) {
++    int v=0; if(SDL_GL_GetAttribute(attr,&v)==0)fprintf(stderr,"renderer-diagnostics: gl.attribute.%s=%d\n",name,v);
++    else fprintf(stderr,"renderer-diagnostics: gl.attribute.%s=unavailable error=%s\n",name,renderer_or_unknown(SDL_GetError()));
++}
++/* stderr is captured by the launcher into the workspace-root devlog.log. */
++static void renderer_diagnostics(void) {
++    SDL_version cv,rv;SDL_VERSION(&cv);SDL_GetVersion(&rv);
++    const char* vd=SDL_GetCurrentVideoDriver();
++    fprintf(stderr,"renderer-diagnostics: begin\n");
++    fprintf(stderr,"renderer-diagnostics: ready=%s\n",
++        g_headless?"headless":((g_gl||(g_ren&&g_tex))?"yes":"no"));
++    fprintf(stderr,"renderer-diagnostics: game_renderer_fallback=%s\n",
++        g_headless?"not-applicable":(g_gl?"false":"true"));
++    fprintf(stderr,"renderer-diagnostics: render_path=%s\n",
++        g_headless?"headless/no-window":(g_gl?"OpenGL + gl_render":(g_ren?"SDL_Renderer + software 3D":"initialization failed")));
++    fprintf(stderr,"renderer-diagnostics: fallback_reason=%s\n",
++        g_headless?"not-applicable (DQIX_NOWINDOW)":(g_gl?"none":renderer_or_unknown(g_gl_fallback_reason)));
++    fprintf(stderr,"renderer-diagnostics: platform=%s sdl.compile=%u.%u.%u sdl.runtime=%u.%u.%u video_driver=%s SDL_VIDEODRIVER=%s SDL_RENDER_DRIVER=%s\n",
++        renderer_or_unknown(SDL_GetPlatform()),cv.major,cv.minor,cv.patch,rv.major,rv.minor,rv.patch,
++        renderer_or_unknown(vd),renderer_or_unknown(getenv("SDL_VIDEODRIVER")),renderer_or_unknown(getenv("SDL_RENDER_DRIVER")));
++    fprintf(stderr,"renderer-diagnostics: env.DQIX_SOFTWARE=%s env.DQIX_MODE=%s env.DQIX_SCALE=%s env.DQIX_SCALE3D=%s\n",
++        renderer_or_unknown(getenv("DQIX_SOFTWARE")),renderer_or_unknown(getenv("DQIX_MODE")),
++        renderer_or_unknown(getenv("DQIX_SCALE")),renderer_or_unknown(getenv("DQIX_SCALE3D")));
++    fprintf(stderr,"renderer-diagnostics: game_mode=%s scale=%d scale3d=%d scale3d_auto=%s fullscreen=%s\n",
++        g_classic?"classic":"enhanced",g_scale,g_scale3d,g_res_auto?"true":"false",g_fullscreen?"true":"false");
++    if(g_headless)fprintf(stderr,"renderer-diagnostics: window=not-created; no video renderer requested\n");
++    else if(g_win) {
++        int w=0,h=0,dw=0,dh=0;Uint32 flags=SDL_GetWindowFlags(g_win);int display=SDL_GetWindowDisplayIndex(g_win);
++        SDL_GetWindowSize(g_win,&w,&h);SDL_GL_GetDrawableSize(g_win,&dw,&dh);
++        fprintf(stderr,"renderer-diagnostics: window.id=%u flags=0x%08x size=%dx%d drawable=%dx%d display=%d opengl=%s resizable=%s high_dpi=%s fullscreen=%s\n",
++            SDL_GetWindowID(g_win),flags,w,h,dw,dh,display,(flags&SDL_WINDOW_OPENGL)?"true":"false",
++            (flags&SDL_WINDOW_RESIZABLE)?"true":"false",(flags&SDL_WINDOW_ALLOW_HIGHDPI)?"true":"false",
++            (flags&(SDL_WINDOW_FULLSCREEN|SDL_WINDOW_FULLSCREEN_DESKTOP))?"true":"false");
++        if(display>=0){SDL_DisplayMode dm;if(SDL_GetCurrentDisplayMode(display,&dm)==0)
++            fprintf(stderr,"renderer-diagnostics: display.mode=%dx%d refresh_hz=%d format=%s\n",dm.w,dm.h,dm.refresh_rate,SDL_GetPixelFormatName(dm.format));
++            else fprintf(stderr,"renderer-diagnostics: display.mode=unavailable error=%s\n",renderer_or_unknown(SDL_GetError()));}
++    } else if(g_sdl_window_failure[0])fprintf(stderr,"renderer-diagnostics: window.creation_error=%s\n",g_sdl_window_failure);
++    if(g_gl&&g_glctx) {
++        typedef const unsigned char* (*GetStringFn)(unsigned int);
++        GetStringFn gs=(GetStringFn)SDL_GL_GetProcAddress("glGetString");
++        renderer_log_gl_attribute("context_major",SDL_GL_CONTEXT_MAJOR_VERSION);
++        renderer_log_gl_attribute("context_minor",SDL_GL_CONTEXT_MINOR_VERSION);
++        renderer_log_gl_attribute("context_profile",SDL_GL_CONTEXT_PROFILE_MASK);
++        renderer_log_gl_attribute("context_flags",SDL_GL_CONTEXT_FLAGS);
++        renderer_log_gl_attribute("double_buffer",SDL_GL_DOUBLEBUFFER);
++        renderer_log_gl_attribute("depth_size",SDL_GL_DEPTH_SIZE);renderer_log_gl_attribute("stencil_size",SDL_GL_STENCIL_SIZE);
++        renderer_log_gl_attribute("red_size",SDL_GL_RED_SIZE);renderer_log_gl_attribute("green_size",SDL_GL_GREEN_SIZE);
++        renderer_log_gl_attribute("blue_size",SDL_GL_BLUE_SIZE);renderer_log_gl_attribute("alpha_size",SDL_GL_ALPHA_SIZE);
++        renderer_log_gl_attribute("multisample_buffers",SDL_GL_MULTISAMPLEBUFFERS);renderer_log_gl_attribute("multisample_samples",SDL_GL_MULTISAMPLESAMPLES);
++        fprintf(stderr,"renderer-diagnostics: gl.request=3.3-core swap_interval_set_result=%d swap_interval_actual=%d\n",g_gl_swap_interval_set_result,g_gl_swap_interval_actual);
++        fprintf(stderr,"renderer-diagnostics: gl.vendor=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F00u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: gl.renderer=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F01u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: gl.version=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F02u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: glsl.version=%s\n",gs?renderer_or_unknown((const char*)gs(0x8B8Cu)):"(unavailable)");
++    } else {
++        fprintf(stderr,"renderer-diagnostics: gl.context_present=false requested=3.3-core\n");
++        fprintf(stderr,"renderer-diagnostics: fallback.window_error=%s accelerated_renderer_error=%s software_renderer_error=%s texture_error=%s\n",
++            renderer_or_unknown(g_sdl_window_failure),renderer_or_unknown(g_sdl_renderer_accelerated_error),
++            renderer_or_unknown(g_sdl_renderer_software_error),renderer_or_unknown(g_sdl_texture_failure));
++        if(g_ren){
++            SDL_RendererInfo i;if(SDL_GetRendererInfo(g_ren,&i)==0){
++                fprintf(stderr,"renderer-diagnostics: sdl_renderer.name=%s flags=0x%08x accelerated=%s software=%s vsync=%s target_texture=%s max_texture=%dx%d format_count=%u\n",
++                    renderer_or_unknown(i.name),i.flags,(i.flags&SDL_RENDERER_ACCELERATED)?"true":"false",
++                    (i.flags&SDL_RENDERER_SOFTWARE)?"true":"false",(i.flags&SDL_RENDERER_PRESENTVSYNC)?"true":"false",
++                    (i.flags&SDL_RENDERER_TARGETTEXTURE)?"true":"false",i.max_texture_width,i.max_texture_height,i.num_texture_formats);
++                for(Uint32 n=0;n<i.num_texture_formats&&n<16;n++)
++                    fprintf(stderr,"renderer-diagnostics: sdl_renderer.texture_format[%u]=%s\n",n,SDL_GetPixelFormatName(i.texture_formats[n]));
++            }else fprintf(stderr,"renderer-diagnostics: sdl_renderer.info_error=%s\n",renderer_or_unknown(SDL_GetError()));
++            int ow=0,oh=0;if(SDL_GetRendererOutputSize(g_ren,&ow,&oh)==0)fprintf(stderr,"renderer-diagnostics: sdl_renderer.output_size=%dx%d\n",ow,oh);
++            else fprintf(stderr,"renderer-diagnostics: sdl_renderer.output_size_error=%s\n",renderer_or_unknown(SDL_GetError()));
++        }else fprintf(stderr,"renderer-diagnostics: sdl_renderer=not-created\n");
++        if(g_tex){Uint32 fmt=SDL_PIXELFORMAT_UNKNOWN;int access=-1,w=0,h=0;
++            if(SDL_QueryTexture(g_tex,&fmt,&access,&w,&h)==0)fprintf(stderr,"renderer-diagnostics: sdl_texture.format=%s access=%d size=%dx%d\n",SDL_GetPixelFormatName(fmt),access,w,h);
++            else fprintf(stderr,"renderer-diagnostics: sdl_texture.query_error=%s\n",renderer_or_unknown(SDL_GetError()));
++        }else fprintf(stderr,"renderer-diagnostics: sdl_texture=not-created\n");
++    }
++    fprintf(stderr,"renderer-diagnostics: end\n");
++}
+ 
+ /* The window's icon: the game's own, the 32x32 picture the DS menu shows for
+  * the cartridge (in the ROM's banner). On Windows, dqix.exe normally carries
+@@ -952,13 +1057,18 @@
+         const char* sc = getenv("DQIX_SCALE");
+         if (sc) { g_scale = atoi(sc); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+         if (!try_gl()) {
+-            g_win = SDL_CreateWindow("Dragon Quest IX", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * g_scale, 384 * g_scale,
+-                                     SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+-            if (!g_win) { fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError()); exit(1); }
+-            g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_ACCELERATED);
+-            if (!g_ren) g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_SOFTWARE);
+-            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+-            g_tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256, 384);
++            if(!g_gl_fallback_reason[0])snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"OpenGL initialization failed without a specific reason");
++            SDL_ClearError();
++            g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
++            if(!g_win){snprintf(g_sdl_window_failure,sizeof g_sdl_window_failure,"SDL_CreateWindow for SDL_Renderer failed: %.220s",SDL_GetError());renderer_diagnostics();exit(1);}
++            SDL_ClearError();g_ren=SDL_CreateRenderer(g_win,-1,SDL_RENDERER_ACCELERATED);
++            if(!g_ren){snprintf(g_sdl_renderer_accelerated_error,sizeof g_sdl_renderer_accelerated_error,"%.300s",SDL_GetError());SDL_ClearError();
++                g_ren=SDL_CreateRenderer(g_win,-1,SDL_RENDERER_SOFTWARE);
++                if(!g_ren)snprintf(g_sdl_renderer_software_error,sizeof g_sdl_renderer_software_error,"%.300s",SDL_GetError());}
++            if(!g_ren){renderer_diagnostics();exit(1);}
++            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"nearest");SDL_ClearError();
++            g_tex=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,256,384);
++            if(!g_tex){snprintf(g_sdl_texture_failure,sizeof g_sdl_texture_failure,"SDL_CreateTexture(ARGB8888 streaming 256x384) failed: %.220s",SDL_GetError());renderer_diagnostics();exit(1);}
+         }
+         window_icon();
+         {   /* started again by the program itself (reset, sessions): the window where it was */
+@@ -980,6 +1090,7 @@
+         session_lobby_hook = lobby_hook;
+         air_idle_hook = idle_pump;
+     }
++    renderer_diagnostics();
+     SDL_AudioSpec want, have;
+     SDL_zero(want);
+     want.freq = 32768; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024; want.callback = audio_cb;

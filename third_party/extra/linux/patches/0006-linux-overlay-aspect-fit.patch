@@ -1,0 +1,51 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -1615,8 +1615,30 @@
+     SDL_RenderGetLogicalSize(g_ren, &logical_width, &logical_height);
+     if (logical_width > 0 && logical_height > 0) { width = logical_width; height = logical_height; }
+     else if (SDL_GetRendererOutputSize(g_ren, &width, &height) != 0) return;
++
++    {
++        Uint8 old_r = 0, old_g = 0, old_b = 0, old_a = 255;
++        SDL_BlendMode old_blend = SDL_BLENDMODE_NONE;
++        int have_color = SDL_GetRenderDrawColor(g_ren, &old_r, &old_g, &old_b, &old_a) == 0;
++        int have_blend = SDL_GetRenderDrawBlendMode(g_ren, &old_blend) == 0;
++        SDL_Rect dim = {0, 0, width, height};
++        if (SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND) == 0 &&
++            SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 118) == 0) {
++            if (SDL_RenderFillRect(g_ren, &dim) != 0 && !g_linux_overlay_error_reported) {
++                fprintf(stderr, "linux-overlay: background dim failed: %s\n", SDL_GetError());
++                g_linux_overlay_error_reported = 1;
++            }
++        } else if (!g_linux_overlay_error_reported) {
++            fprintf(stderr, "linux-overlay: background dim setup failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++        }
++        if (have_color) SDL_SetRenderDrawColor(g_ren, old_r, old_g, old_b, old_a);
++        if (have_blend) SDL_SetRenderDrawBlendMode(g_ren, old_blend);
++    }
++
++    if (!dqix_linux_overlay_fit_rect(width, height,
++                                     &destination.x, &destination.y,
++                                     &destination.w, &destination.h)) return;
+-    destination.x = destination.y = 0;
+-    destination.w = width; destination.h = height;
+     if (SDL_RenderCopy(g_ren, g_linux_overlay_texture, NULL, &destination) != 0 &&
+         !g_linux_overlay_error_reported) {
+         fprintf(stderr, "linux-overlay: SDL_RenderCopy failed: %s\n", SDL_GetError());
+@@ -2927,10 +2949,12 @@
+     case SDL_MOUSEBUTTONUP:
+         if (event->type == SDL_MOUSEBUTTONUP && event->button.button == SDL_BUTTON_LEFT) {
+             int ww = 0, wh = 0, ox = event->button.x, oy = event->button.y;
++            int fit_x = 0, fit_y = 0, fit_w = 0, fit_h = 0;
+             SDL_GetWindowSize(g_win, &ww, &wh);
++            if (dqix_linux_overlay_fit_rect(ww, wh, &fit_x, &fit_y, &fit_w, &fit_h) &&
++                ox >= fit_x && ox < fit_x + fit_w && oy >= fit_y && oy < fit_y + fit_h) {
++                ox = (ox - fit_x) * DQIX_LINUX_OVERLAY_WIDTH / fit_w;
++                oy = (oy - fit_y) * DQIX_LINUX_OVERLAY_HEIGHT / fit_h;
+-            if (ww > 0 && wh > 0) {
+-                ox = ox * DQIX_LINUX_OVERLAY_WIDTH / ww;
+-                oy = oy * DQIX_LINUX_OVERLAY_HEIGHT / wh;
+                 if (ox >= DQIX_LINUX_OVERLAY_ROW_X &&
+                     ox < DQIX_LINUX_OVERLAY_ROW_X + DQIX_LINUX_OVERLAY_ROW_WIDTH) {
+                     for (int row = 0; row < 4; ++row) {

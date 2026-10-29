@@ -1,0 +1,28 @@
+--- a/tools/build-game.sh
++++ b/tools/build-game.sh
+@@ -12,8 +12,18 @@
+ STEP="starting"
+ # a step that fails without a message of its own still says which it was
+ trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "   The build stopped while: $STEP (error $rc)."; fi' EXIT
+-cd "$(dirname "$0")/.."
+-ROM="$1"
++# This copy is Linux-only; Windows/MSYS2 keeps using the canonical script.
++case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Linux mirror entry point cannot run on Windows." >&2; exit 2 ;; esac
++WORKSPACE_ROOT="$(pwd -P)"
++if [ -n "$DQIX_WORKSPACE_ROOT" ]; then WORKSPACE_ROOT="$DQIX_WORKSPACE_ROOT"; fi
++ROM_INPUT="$1"
++[ -n "$ROM_INPUT" ] || { echo "Usage: Linux build entry point <rom.nds>"; exit 2; }
++case "$ROM_INPUT" in /*) ;; *) ROM_INPUT="$(pwd -P)/$ROM_INPUT" ;; esac
++[ -d "$WORKSPACE_ROOT" ] || { echo "Workspace root not found: $WORKSPACE_ROOT"; exit 2; }
++cd "$WORKSPACE_ROOT"
++LINUX_MAKEFILE="third_party/extra/linux/src/build.mk"
++[ -f "$LINUX_MAKEFILE" ] || { echo "Linux mirror makefile not found: $LINUX_MAKEFILE"; exit 2; }
++ROM="$ROM_INPUT"
+ [ -f "$ROM" ] || { echo "No ROM given (or it doesn't exist): $ROM"; exit 1; }
+ 
+ STEP="checking the ROM"; echo "== Checking the ROM"
+@@ -96,3 +106,3 @@
+     EXE=game/dqix
+-    make -j"$(nproc)" -f build.mk GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.so PIC=-fPIC \
++    make -j"$(nproc)" -f "$LINUX_MAKEFILE" GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.so PIC=-fPIC \
+          CFLAGS="-O1 -w" DEFS=-DRECOMP_TRACE SDL_CFLAGS="${SDL_CFLAGS:-$(sdl2-config --cflags)}" SDL_LIBS="${SDL_LIBS:-$(sdl2-config --libs)}" "$EXE" core ;;
