@@ -49,6 +49,15 @@ what's missing is everything around it.
 
 ## Multiplayer polish
 
+- [ ] **Lag with four players** (reported after v32): find where the time
+      goes (the relay's extra trips through the host, its 30 ms bundling at
+      each end, the slowest player holding everyone back) and cut it.
+- [ ] **The relay running out of its daily allowance**: on Cloudflare's free
+      plan the relay hit its 100,000-request daily cap on 2026-10-30, and
+      then nobody can join with a code until midnight UTC. Fewer messages
+      (the host sending one bundle for all friends, not one per friend),
+      direct connections first (hole punching, below), and the paid plan
+      if it's still needed.
 - [ ] **Lower input delay over long distances**: base it on the one-way trip,
       bundle less at the relay, and log every wait so lag can be traced.
 - [ ] **The host window on Windows**: check the Copy button and the player
