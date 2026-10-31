@@ -1,15 +1,15 @@
 # Where the project stands
 
-Git tag `v32` marks the current stable version.
-The ones before: `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `git checkout v31`.
+Git tag `v33` marks the current stable version.
+The ones before: `v32`, `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `git checkout v32`.
 
 ## Stable and nightly
 
-- **Stable** = git branch `stable` (now v32, tag `v32`): the
+- **Stable** = git branch `stable` (now v33, tag `v33`): the
   version to play your main save on. Changes only by promoting a proven
   nightly, or a small safe fix (made on `stable`, then merged into `main`).
   Keep it in its own folder, built with BUILD.bat.
-- **Nightly** = branch `main`, versions `v33-nightly1`, `-nightly2`... (next)
+- **Nightly** = branch `main`, versions `v34-nightly1`, `-nightly2`... (next)
   Experimental. Its own folder and saves.
 - **Promoting**: when a nightly is solid, it becomes the next stable: set the
   version to `v27`, bookmark (tag), move `stable` to it, make the stable zips.
@@ -270,6 +270,15 @@ The ones before: `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `git chec
   30 ms coalescing, keepalive 25 s), relay_url.h. Host window by reach
   (direct / code / home only). connect_within 10 s; home_address warning.
   Tested with a Node stand-in for the Workers runtime.
+- **v33 stable** (2026-10-31): fixes from v32's reports, straight to
+  stable. Battle HUD: panels found by their lines on the left (submenus
+  cross them on the right; then one piece), kept in the party's order, a
+  party of one (its white bottom line; a panel higher); 3D battle messages
+  too wide to pass the panels move up (HPoly ui_dy, their wide lines too).
+  2D dialogue band: only small windows (runs <= 12 cells) in the row above.
+  Krak Pot: overlay 6 opened from the field (alchemy_track) never swaps.
+  Big-object box test out to 2 wide widths, not 3 (DQIX_BIG_DIV): a far
+  part of the Gortress turnstile was drawn stale.
 - **v32 stable** (2026-10-27): v32-nightly3 and the work after it promoted.
   European ROM (tools/region.py moves the USA address lists; wrap.txt names
   its hooks so the runtime's wrap_<name> doesn't depend on the address);

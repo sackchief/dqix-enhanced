@@ -3,7 +3,7 @@
 What's planned for DQIX Enhanced, roughly in order. Done items move to the
 bottom with the version they arrived in.
 
-## Next: v33
+## Next: v34
 
 - [ ] **An in-game menu** drawn by the game itself (Esc, or a controller
       button): every option in a list over the game, easy with a controller.
@@ -18,9 +18,14 @@ bottom with the version they arrived in.
       `screenshots` folder, named by date and time (now: the DS's two
       screens as BMPs, numbered from 0 again every launch).
 - [ ] **Dynamic Widescreen polish**: the Zoom menu's smear (#16), a flicker
-      after leaving the attribute points menu, and whatever the play
-      testing of v32 turns up.
+      after leaving the attribute points menu, the paler sky at the far
+      sides in battles, and whatever play testing turns up.
 - [ ] The window light in the Upover inn flickers (#19; not on a DS).
+- [ ] **Bug reports that still replay after an update**: the report keeps
+      the build's widescreen settings that change what the game counts as
+      in view, and the replay uses them.
+- [ ] Letters cut short in the battle panels ("Lv '1"; one player, maybe
+      the European version with HD text).
 
 ## Then
 
@@ -32,7 +37,7 @@ bottom with the version they arrived in.
 The game already runs on Linux (every automated test is a Linux build);
 what's missing is everything around it.
 
-- [ ] (In v33, above.) **An in-game menu**: needed on the Steam Deck,
+- [ ] (In v34, above.) **An in-game menu**: needed on the Steam Deck,
       Linux, Android and handhelds like the Thor; also gives Mac a menu.
 - [ ] **Installing on Linux**: rakmahefa's AppImage builder (v32) builds
       the game from your ROM; still to come: a desktop shortcut for the
@@ -135,6 +140,10 @@ the same room.
 
 ## Done
 
+- [x] **v33 released as stable**: Dynamic Widescreen battles (submenus
+      shown whole, the panels in the party's order, a party of one, long
+      messages above the panels), dialogue boxes with a tag and Yes/No kept
+      centred, the Krak Pot without the screen swap, the Gortress turnstile.
 - [x] **v32 released as stable** (from v32-nightly1 to nightly3 and the
       fixes after): the European version and its Language menu
       (romusan495), a Linux AppImage builder (rakmahefa), HD text (Arthur
