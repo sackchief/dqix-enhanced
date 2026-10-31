@@ -55,6 +55,7 @@ typedef struct {
     u32 sortkey;
     int hidden;            /* drawn under a hidden tag (g_gx_hide): left out of the picture only */
     int ui_moved;          /* dynamic widescreen: how far a window moves right, DS pixels (ui_shift_classify) */
+    int ui_dy;             /* ...and up (a battle message too wide to clear the panels: above them) */
 } HPoly;
 
 /* Tags (tags.txt): the recompiled code calls gx_tag_begin/end around calls
@@ -1667,7 +1668,7 @@ static int ysort_cmp(const void* a, const void* b) {
  * fade). In battles (g_ui_battle3d) only the battle messages at the bottom
  * move, clear of the party's panels. The moved windows are kept (where they
  * were) for the mouse: gpu3d_ui_unshift. */
-int g_ui_shift3d, g_ui_battle3d, g_ui_hold, g_ui_area3d, g_ui_battle_left, g_ui_scene = 768, g_ui_windows3d;   /* scene: 8x8 cells the 3D scene covers; windows3d: cells under windows */   /* battle_left: DS x the battle messages start at (right of the panels) */     /* hold: a submenu, nothing moved; area: 8x8 cells under moving windows */
+int g_ui_shift3d, g_ui_battle3d, g_ui_hold, g_ui_area3d, g_ui_battle_left, g_ui_battle_top, g_ui_scene = 768, g_ui_windows3d;   /* scene: 8x8 cells the 3D scene covers; windows3d: cells under windows */   /* battle_left: DS x the battle messages start at (right of the panels) */     /* hold: a submenu, nothing moved; area: 8x8 cells under moving windows */
 uint8_t g_ui_field[24][32];   /* 8x8 cells the 3D scene (not its windows) is drawn in */
 int g_ui_npoly;   /* polygons drawn (tests' log) */
 static int g_ui_nrect; static int g_ui_rect[32][5];   /* moved windows: x0, y0, x1, y1 where they really are, and how far */
@@ -1689,13 +1690,13 @@ static int ui_flat(const HPoly* h) {
 }
 static int ui_shift_classify(HPoly** list, u32 count, int side) {
     static int idx[WPOLY_MAX], parent[WPOLY_MAX], box[WPOLY_MAX][4];
-    int m = 0;
+    int m = 0, wide[16][3], nwide = 0;
     g_ui_area3d = 0;
     g_ui_npoly = (int)count;
     uint8_t (*field)[32] = g_ui_field; memset(g_ui_field, 0, sizeof g_ui_field);
     g_ui_scene = 0;
     for (u32 i = 0; i < count; i++) {
-        HPoly* h = list[i]; h->ui_moved = 0;
+        HPoly* h = list[i]; h->ui_moved = 0; h->ui_dy = 0;
         if (!ui_flat(h)) {                                               /* the 3D scene itself: where it is drawn */
             if (h->n < 3 || h->degenerate) continue;
             int x0 = 1 << 30, x1 = -(1 << 30), y0 = 1 << 30, y1 = -(1 << 30);
@@ -1716,7 +1717,10 @@ static int ui_shift_classify(HPoly** list, u32 count, int side) {
             if (((h->texparam >> 26) & 7) != 0) g_ui_area3d += 1000;     /* textured: a menu's own background (Stella's): a submenu */
             continue;
         }
-        if (x1 - x0 > 270) continue;                                     /* wider than the DS's screen: scenery made for the wide view (a battle's backdrop), not a window */
+        if (x1 - x0 > 270) {                                             /* wider than the DS's screen: scenery made for the wide view (a battle's backdrop), not a window */
+            if (y1 - y0 <= 10 && y0 >= 96 && nwide < 16) { wide[nwide][0] = (int)i; wide[nwide][1] = y0; wide[nwide][2] = y1; nwide++; }   /* (or a battle message's lines, drawn that wide) */
+            continue;
+        }
         if (m == WPOLY_MAX) break;
         idx[m] = (int)i; parent[m] = m; box[m][0] = x0; box[m][1] = y0; box[m][2] = x1; box[m][3] = y1; m++;
     }
@@ -1753,12 +1757,17 @@ static int ui_shift_classify(HPoly** list, u32 count, int side) {
             if (gb[r][3] <= gb[q][1] + 2 && gb[r][3] >= gb[q][1] - 12 && gb[r][0] >= gb[q][0] - 8 && gb[r][2] <= gb[q][2] + 8) dialogue = 1;
         }
         if (r == a && w >= 240 && hh >= 150) g_ui_area3d += 1000;       /* flat pictures over the whole screen (DQVC): a screen of its own */
-        int sh = g_ui_shift3d;
+        int sh = g_ui_shift3d, dy = 0;
         if (g_ui_battle3d) {                                             /* the battle messages (lines, or their box): clear of the panels, */
-            mv = gb[r][1] >= 96 && hh <= 80;                             /* as far as the right edge allows */
+            mv = gb[r][1] >= 96 && hh <= 100;                            /* as far as the right edge allows */
             int need = g_ui_battle_left - gb[r][0], room = 255 + side - gb[r][2];
             if (need > sh) sh = need;
             if (sh > room) sh = room < g_ui_shift3d ? g_ui_shift3d : room;
+            if (mv && gb[r][0] + sh < g_ui_battle_left && g_ui_battle_top > 0 && gb[r][3] > g_ui_battle_top - 3) {   /* too wide to clear them (choosing commands): */
+                dy = g_ui_battle_top - 3 - gb[r][3];                     /* above the panels instead, in the middle */
+                if (gb[r][1] + dy < 2) dy = 2 - gb[r][1];
+                sh = g_ui_shift3d;
+            }
         }
         else mv = !dialogue && w >= 40 && hh >= 12 && !(w >= 240 && hh >= 150);                      /* windows (menus, lists, the gold); not the speech bubbles, */
                                                                         /* item icons or the draggable X Menu (they belong to the field) */
@@ -1768,7 +1777,9 @@ static int ui_shift_classify(HPoly** list, u32 count, int side) {
                 fprintf(stderr, "win3d f%llu: %d,%d - %d,%d dialogue %d move %d\n", (unsigned long long)g_frame, gb[r][0], gb[r][1], gb[r][2], gb[r][3], dialogue, mv); }
         if (!mv) continue;
         if (g_ui_hold) continue;
-        list[idx[a]]->ui_moved = sh; any = 1;
+        list[idx[a]]->ui_moved = sh; list[idx[a]]->ui_dy = dy; any = 1;
+        if (dy && r == a) for (int k = 0; k < nwide; k++)               /* its wide lines go up with it */
+            if (wide[k][1] >= gb[r][1] - 2 && wide[k][2] <= gb[r][3] + 2) { list[wide[k][0]]->ui_moved = sh; list[wide[k][0]]->ui_dy = dy; }
         if (r == a && g_ui_nrect < 32) { int* q = g_ui_rect[g_ui_nrect++]; q[0] = gb[r][0]; q[1] = gb[r][1]; q[2] = gb[r][2]; q[3] = gb[r][3]; q[4] = sh; }
     }
     /* small pieces next to a moved window (its pointer, a scroll arrow) go with it */
@@ -1828,7 +1839,7 @@ static void gl_frame(void) {
             const Vtx* v = h->v[k];
             SVtx* o = &q->v[k];
             o->x = v->hpos[0] / 16.0f; o->y = v->hpos[1] / 16.0f;
-            if (shift_ui && h->ui_moved) o->x += (float)h->ui_moved;
+            if (shift_ui && h->ui_moved) { o->x += (float)h->ui_moved; o->y += (float)h->ui_dy; }
             o->zn = h->wbuf ? (float)h->z[k] / 16777215.0f : (float)h->z[k] / 16777215.0f;
             o->iw = v->pos[3] ? 4096.0f / (float)v->pos[3] : 1e6f;
             o->r = v->fcol[0] / 16.0f; o->g = v->fcol[1] / 16.0f; o->b = v->fcol[2] / 16.0f;

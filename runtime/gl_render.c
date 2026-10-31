@@ -1642,8 +1642,9 @@ static int ui_classify(void) {
             if (wide) { top = ry; if (bot < 0) bot = ry; }
             else if (bot >= 0) break;
         }
-        int above = 0; if (top > 0) for (int cx = 0; cx < 32; cx++) above += gcell[g][top - 1][cx];
-        if (bot >= 0 && top >= 12 && bot - top >= 2 && above < 10) bands[g] = top;   /* (a big window reaching higher, or sitting on it, is no dialogue box) */
+        int above = 0, run = 0;                                          /* the widest window in the row above (a name tag and a Yes/No: small ones) */
+        if (top > 0) for (int cx = 0; cx < 32; cx++) { run = gcell[g][top - 1][cx] ? run + 1 : 0; if (run > above) above = run; }
+        if (bot >= 0 && top >= 12 && bot - top >= 2 && above <= 12) bands[g] = top;   /* (a big window reaching higher, or sitting on it, is no dialogue box) */
     }
     int band_any = bands[0] < bands[1] ? bands[0] : bands[1];
     int tags[16][5], ntag = 0;                                           /* the dialogue box's small windows (for after) */

@@ -1,8 +1,21 @@
 **The newest work, less tested.** Use the stable release for your main
 adventure; try this one in its own folder with a copy of your save.
 
-**Right now the nightly is the same as stable v32.** The next nightly
-(v33-nightly1) will bring new work; see ROADMAP.md for what's planned.
+**What's new since v32**
+
+Dynamic Widescreen
+- **Battle submenus show again**: spells, abilities, items and changing
+  equipment kept the party's panels but lost their lists and descriptions;
+  now the commands screen shows whole while they are open.
+- **A long battle message** (Examine) that can't fit beside the panels
+  goes above them instead of under them.
+- **Dialogue boxes stay in the middle** when their name tag and Yes/No sit
+  on them together (the Krak Pot, Dr Phlegming).
+- **The Krak Pot no longer swaps the screens** while you pick ingredients:
+  the pot and the item's description stay big, the recipe list small in
+  the corner. Stella's Alchemimicon still shows its list big.
+
+See ROADMAP.md for what's planned next.
 
 **How to install**: download *Source code (zip)* below, unzip it and
 double-click `Install Dragon Quest IX.bat`. Already playing? Use Help >

@@ -82,6 +82,7 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 0;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
+static int g_hud_whole;                                           /* ...a submenu's windows across them (spells, items): the panels in one piece */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -274,7 +275,7 @@ static int scene_rule(void) {                                     /* 0, 'b' or '
 }
 static int g_scene_stack;                                         /* this frame: show stacked (both screens are one picture) */
 static int g_ui_plain;                                            /* dynamic widescreen: a menu screen of its own: the DS's picture as it is, 4:3 at the right */
-static int g_hud_right;                                            /* the battle panels' right edge on the canvas (0: none) */
+static int g_hud_right, g_hud_top;                                            /* the battle panels' right edge on the canvas (0: none) */
 static uint64_t g_last_battle;                                    /* the frame the battle panels were last seen */
 static void notice(const char* fmt, ...);
 /* Modern > "Widescreen: black sides in this place": add or remove this map in widescreen.txt */
@@ -298,11 +299,26 @@ static void scene_toggle_bars(void) {
 
 /* Is the Alchemimicon (the recipe book, overlay 6) open? Its recipe list is on the
  * bottom screen: shown big instead (DQIX_NO_ALCHEMY_SWAP: tests, not). */
+static int g_krak_pot;
 static int alchemimicon_open(void) {
     static int off = -1; if (off < 0) off = getenv("DQIX_NO_ALCHEMY_SWAP") != NULL;
     if (off) return 0;
     extern uint64_t overlays_loaded_mask(void); extern int gpu3d_poly_count(void);
-    return ((overlays_loaded_mask() >> 6) & 1) && gpu3d_poly_count() == 0;   /* (not the Krak Pot, which has it too: its pot is 3D) */
+    return ((overlays_loaded_mask() >> 6) & 1) && gpu3d_poly_count() == 0 && !g_krak_pot;   /* (not the Krak Pot, which has it too) */
+}
+/* The Krak Pot loads the Alchemimicon too, but there the description (and the
+ * pot) stay big and the list small: it opens straight from the field, Stella's
+ * from her own screen. Once a frame (present_gl). */
+static void alchemy_track(void) {
+    extern uint64_t overlays_loaded_mask(void); extern int gpu3d_poly_count(void);
+    extern int g_ui_scene, g_ui_area3d;
+    static uint64_t field_seen, loaded; static int was;
+    int six = (overlays_loaded_mask() >> 6) & 1;
+    if (!six && g_ui_scene >= 576 && g_ui_area3d < 1000) field_seen = g_frame;   /* the field (not a screen of its own) */
+    if (six && !was) { loaded = g_frame; g_krak_pot = g_frame - field_seen <= 30; }
+    if (six && g_frame - loaded >= 10 && gpu3d_poly_count() > 0) g_krak_pot = 1;   /* (and its pot is 3D) */
+    if (!six) g_krak_pot = 0;
+    was = six;
 }
 
 /* Widescreen: DS pixels to add left and right of the 3D picture. 16:9 in a
@@ -393,8 +409,15 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                 float total = 0;
                 int tall = 0;
                 for (int i = 0; i < g_hud_n; i++) { total += (float)(g_hud_band[i][1] - g_hud_band[i][0]) * k + gap; if (g_hud_band[i][1] - g_hud_band[i][0] >= 50) tall = 1; }
+                if (tall && g_hud_whole) {                            /* a submenu over them (spells, items): all of it as on the DS, so its windows stay whole */
+                    float h = (float)(g_hud_band[g_hud_n - 1][1] - g_hud_band[0][0]);
+                    float* q = v->piece[v->npiece++];
+                    q[4] = 1; q[5] = 4; q[6] = (float)g_hud_band[0][0]; q[7] = 250; q[8] = h;
+                    q[0] = 4; q[1] = 192 - h * k - gap; q[2] = 250 * k; q[3] = h * k; q[9] = see;
+                    total = h * k + gap;
+                }
                 float y = 192 - total;
-                for (int pass = 0; pass < 2; pass++)              /* the tall one first */
+                for (int pass = 0; pass < 2 && !(tall && g_hud_whole); pass++)   /* the tall one first */
                     for (int i = 0; i < g_hud_n && v->npiece + 2 <= GL_MAX_PIECES; i++) {
                         float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
                         if ((h >= 50) == pass) continue;
@@ -411,7 +434,8 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                         }
                         y += q[3] + gap;
                     }
-                if (!second) { g_hud_right = 0; for (int i = 0; i < v->npiece; i++) if (v->piece[i][1] > 96 && v->piece[i][0] + v->piece[i][2] > g_hud_right) g_hud_right = (int)(v->piece[i][0] + v->piece[i][2]); }
+                if (!second) { g_hud_right = 0; g_hud_top = 0; for (int i = 0; i < v->npiece; i++) if (v->piece[i][1] > 80 && v->piece[i][0] + v->piece[i][2] > g_hud_right) g_hud_right = (int)(v->piece[i][0] + v->piece[i][2]);
+                    if (tall) g_hud_top = (int)(192 - total); }   /* (choosing commands: their top, for a message too wide to pass them) */
             }
         }
     } else if (two || single) {
@@ -1336,11 +1360,12 @@ static void hud_update(int a_on_top) {
             c_sep = out[0]; c_frame = out[1];
         }
     }
-    int sep[192], nsep = 0;
-    for (int y = 0; y < 192; y++) {
-        int n = 0;
-        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == c_sep) n++;
-        sep[y] = n > 200; nsep += sep[y];
+    int sep[192], nsep = 0, crossed = 0;                          /* (on the left: the names, never covered; a submenu's */
+    for (int y = 0; y < 192; y++) {                               /* windows on the right may cross the lines) */
+        int n = 0, nl = 0;
+        for (int x = 10; x < 246; x++) if ((px[y * 256 + x] & 0xFFFFFF) == c_sep) { n++; nl += x < 100; }
+        sep[y] = nl > 80; nsep += sep[y];
+        if (sep[y] && n <= 200) crossed = 1;
     }
     if (nsep < 1) {                                               /* no panels: one window alone (experience, level up)? */
         if (!g_last_battle || g_frame - g_last_battle > 60 * 30) return;   /* only just after a battle (not the field's own windows) */
@@ -1366,7 +1391,7 @@ static void hud_update(int a_on_top) {
         if (n == 8 || h < 30 || h > 80 || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n >= 2) { g_hud_n = n; g_last_battle = g_frame; }
+    if (n >= 2) { g_hud_n = n; g_last_battle = g_frame; g_hud_whole = crossed; }
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at
@@ -1426,9 +1451,10 @@ static void present_gl(void) {
     {   /* dynamic widescreen: the game's windows move right (the field doesn't); in battles only the messages (gpu3d.c) */
         int side = 0; gl_wide_shown(&side);
         int on = g_gl && g_wide && g_wide_dyn && !g_wide_pop && !g_side_by_side && !(g_two && !g_single);
-        extern int g_ui_shift3d, g_ui_battle3d, g_ui_hold, g_ui_area3d, g_ui_battle_left;
+        extern int g_ui_shift3d, g_ui_battle3d, g_ui_hold, g_ui_area3d, g_ui_battle_left, g_ui_battle_top;
         g_ui_shift3d = on ? side : 0; g_ui_battle3d = g_hud_n > 0;                                            /* (gpu3d.c) */
         g_ui_battle_left = g_hud_right > 0 ? g_hud_right - side + 4 : 0;   /* the battle messages start right of the panels */
+        g_ui_battle_top = g_hud_n > 0 ? g_hud_top : 0;
         gl_set_ui_shift(on ? side : 0, g_hud_n > 0);                                                          /* (2D ones) */
         /* a menu screen of its own (Stella's, Equipment: its own background over the whole picture):
          * the DS's picture as it is, 4:3 at the right, nothing moved; back once it's the field again.
@@ -1453,6 +1479,7 @@ static void present_gl(void) {
         if (lg < 0) lg = getenv("DQIX_OVLLOG") != NULL;
         if (lg) { extern uint64_t overlays_loaded_mask(void); uint64_t m = overlays_loaded_mask();
             if (m != last) { last = m; fprintf(stderr, "ovl f%llu:", (unsigned long long)g_frame); for (int i = 0; i < 64; i++) if (m >> i & 1) fprintf(stderr, " %d", i); fprintf(stderr, "\n"); } } }
+    alchemy_track();
     gl_compose((pow >> 15) & 1, pow & 1);
     wide_update((pow >> 15) & 1);
     hud_update((pow >> 15) & 1);
