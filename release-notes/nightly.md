@@ -14,6 +14,9 @@ Dynamic Widescreen
 - **The Krak Pot no longer swaps the screens** while you pick ingredients:
   the pot and the item's description stay big, the recipe list small in
   the corner. Stella's Alchemimicon still shows its list big.
+- **The turnstile in Gortress's prison** no longer jumps to another place
+  with a long thin beam across the floor (widescreen drew a part of it from
+  too far away).
 
 See ROADMAP.md for what's planned next.
 

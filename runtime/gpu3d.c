@@ -675,14 +675,17 @@ static void box_test(const u32* p) {
     {   /* Very large objects (the turnstile in Gortress prison): their beams reach far
          * outside the box the game tests, so in the wide picture they popped into view
          * in the middle of it. Such a box counts as in view a good way further out
-         * (three DS widths, twice the height): the object is then already there
-         * before any of it can show. */
+         * (twice the wide view's width, twice the height): the object is then
+         * already there before any of it can show. (Three widths was too far: a
+         * part of the turnstile far off to the side was drawn where the game had
+         * left it, so the turnstile jumped and a long thin beam crossed the floor.) */
         int big = (x1 - x0) >= 16384 || (y1 - y0) >= 16384 || (z1 - z0) >= 16384;
         static long long big_from = -2;                          /* DQIX_BIG_FROM=frame: only from then (tests: replays of older reports) */
         if (big_from == -2) { const char* e = getenv("DQIX_BIG_FROM"); big_from = e ? atoll(e) : 0; }
         if ((long long)g_frame < big_from) big = 0;
         if (big && g_wide_cull > 0 && viewport[0] == 0 && viewport[4] == 256) {
-            for (int i = 0; i < 8; i++) { cube[i].pos[0] /= 3; cube[i].pos[1] /= 2; }   /* (x was already scaled for the wide view) */
+            static int div = 0; if (!div) { const char* e = getenv("DQIX_BIG_DIV"); div = e ? atoi(e) : 2; if (div < 1) div = 2; }   /* (tests) */
+            for (int i = 0; i < 8; i++) { cube[i].pos[0] /= div; cube[i].pos[1] /= 2; }   /* (x was already scaled for the wide view) */
             for (int f = 0; f < 6; f++) {
                 for (int k = 0; k < 4; k++) face[k] = cube[faces[f][k]];
                 if (clip_polygon(face, 4, 0, 0) > 0) {
