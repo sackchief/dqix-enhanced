@@ -417,10 +417,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     total = h * k + gap;
                 }
                 float y = 192 - total;
-                for (int pass = 0; pass < 2 && !(tall && g_hud_whole); pass++)   /* the tall one first */
+                if (!(tall && g_hud_whole))                           /* in the party's order, as on the DS (the one choosing stays in its place) */
                     for (int i = 0; i < g_hud_n && v->npiece + 2 <= GL_MAX_PIECES; i++) {
                         float h = (float)(g_hud_band[i][1] - g_hud_band[i][0]);
-                        if ((h >= 50) == pass) continue;
                         float* q = v->piece[v->npiece++];
                         if (tall) {                                   /* choosing commands: the whole panels */
                             q[4] = 1; q[5] = 6; q[6] = (float)g_hud_band[i][0]; q[7] = 244; q[8] = h;
@@ -1385,13 +1384,19 @@ static void hud_update(int a_on_top) {
         while (y < 192 && !sep[y]) y++;
         if (y - y0 < 8) continue;                                 /* a border, not a panel */
         /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
+        if (y - y0 > 80) {                                        /* alone in the party: one panel, then the wood (no line below it) */
+            for (int yy = y0 + 30; yy < y0 + 80; yy++) {          /* it ends at its white bottom line */
+                int nw = 0; for (int x = 0; x < 256; x++) nw += (px[yy * 256 + x] & 0xFFFFFF) == c_frame;
+                if (nw > 200) { y = yy + 1; break; }
+            }
+        }
         int h = y - y0, mid = (y0 + y) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == c_frame) framed = 1;
         if (!framed) continue;                                    /* the wood around the panels (above them in the attacks, below a party of 3) */
         if (n == 8 || h < 30 || h > 80 || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }
-    if (n >= 2) { g_hud_n = n; g_last_battle = g_frame; g_hud_whole = crossed; }
+    if (n >= 1) { g_hud_n = n; g_last_battle = g_frame; g_hud_whole = crossed; }   /* (alone in the party: one) */
 }
 
 /* 3D resolution Auto: render at 1.5 times the size the 3D is shown at (at

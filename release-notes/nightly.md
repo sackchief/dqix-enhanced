@@ -7,6 +7,10 @@ Dynamic Widescreen
 - **Battle submenus show again**: spells, abilities, items and changing
   equipment kept the party's panels but lost their lists and descriptions;
   now the commands screen shows whole while they are open.
+- **The party's panels keep their order** while you choose each one's
+  actions (the one choosing no longer jumps to the top).
+- **Fighting alone** shows your panel in the bottom left too, instead of
+  the small screen in the corner.
 - **A long battle message** (Examine) that can't fit beside the panels
   goes above them instead of under them.
 - **Dialogue boxes stay in the middle** when their name tag and Yes/No sit
