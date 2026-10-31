@@ -277,8 +277,9 @@ The ones before: `v32`, `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `g
   too wide to pass the panels move up (HPoly ui_dy, their wide lines too).
   2D dialogue band: only small windows (runs <= 12 cells) in the row above.
   Krak Pot: overlay 6 opened from the field (alchemy_track) never swaps.
-  Big-object box test out to 2 wide widths, not 3 (DQIX_BIG_DIV): a far
-  part of the Gortress turnstile was drawn stale.
+  Big-object box test out to 2 wide widths, not 3 (DQIX_BIG_DIV). The
+  Gortress turnstile is still drawn displaced with a stretched arm, in
+  Classic too (report v33-20261031-180958 at frame 10748): a core bug.
 - **v32 stable** (2026-10-27): v32-nightly3 and the work after it promoted.
   European ROM (tools/region.py moves the USA address lists; wrap.txt names
   its hooks so the runtime's wrap_<name> doesn't depend on the address);

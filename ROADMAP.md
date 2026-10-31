@@ -21,6 +21,10 @@ bottom with the version they arrived in.
       after leaving the attribute points menu, the paler sky at the far
       sides in battles, and whatever play testing turns up.
 - [ ] The window light in the Upover inn flickers (#19; not on a DS).
+- [ ] **The turnstile in Gortress's prison**: drawn away from where it
+      is (its shadow is right), with one arm stretched far across the
+      floor. Also in Classic mode, so it's in the core, not widescreen;
+      to be compared with a reference emulator.
 - [ ] **Bug reports that still replay after an update**: the report keeps
       the build's widescreen settings that change what the game counts as
       in view, and the replay uses them.
@@ -143,7 +147,7 @@ the same room.
 - [x] **v33 released as stable**: Dynamic Widescreen battles (submenus
       shown whole, the panels in the party's order, a party of one, long
       messages above the panels), dialogue boxes with a tag and Yes/No kept
-      centred, the Krak Pot without the screen swap, the Gortress turnstile.
+      centred, the Krak Pot without the screen swap.
 - [x] **v32 released as stable** (from v32-nightly1 to nightly3 and the
       fixes after): the European version and its Language menu
       (romusan495), a Linux AppImage builder (rakmahefa), HD text (Arthur
