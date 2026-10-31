@@ -82,7 +82,7 @@ static int g_peek;                                                /* widescreen:
 static int g_single;                                              /* one screen only (the bottom one, or the top one swapped) */
 static int g_hud = 0;                                             /* widescreen battles: the party's panels and the commands over the 3D (hud_update) */
 static int g_hud_n, g_hud_band[8][2];                             /* ...the panels found on the commands screen: first row, end row */
-static int g_hud_whole;                                           /* ...a submenu's windows across them (spells, items): the panels in one piece */
+static int g_hud_whole, g_hud_solo_h = 71;                                           /* ...a submenu's windows across them (spells, items): the panels in one piece */
 static int g_hud_win[4];                                          /* ...or a window alone there (experience, level up): x, y, w, h (w 0: none) */
 static int g_volume = 100, g_mute;                                /* Game > Volume */
 static char g_notice[160]; static uint64_t g_notice_until;        /* a short message in the title bar */
@@ -415,8 +415,9 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[4] = 1; q[5] = 4; q[6] = (float)g_hud_band[0][0]; q[7] = 250; q[8] = h;
                     q[0] = 4; q[1] = 192 - h * k - gap; q[2] = 250 * k; q[3] = h * k; q[9] = see;
                     total = h * k + gap;
+                    if (g_hud_n == 1) { float t = 192 - g_hud_solo_h * k - gap - (40 * k + gap); if (t < q[1]) q[1] = t; total = 192 - q[1]; }   /* alone: its top where the panel's is (higher only if the windows below need it) */
                 }
-                if (g_hud_n == 1) total += 40 * k + gap;              /* alone in the party: a panel's height higher, easier to see */
+                else if (g_hud_n == 1) total += 40 * k + gap;         /* alone in the party: a panel's height higher, easier to see */
                 float y = 192 - total;
                 if (!(tall && g_hud_whole))                           /* in the party's order, as on the DS (the one choosing stays in its place) */
                     for (int i = 0; i < g_hud_n && v->npiece + 2 <= GL_MAX_PIECES; i++) {
@@ -1385,15 +1386,28 @@ static void hud_update(int a_on_top) {
         while (y < 192 && !sep[y]) y++;
         if (y - y0 < 8) continue;                                 /* a border, not a panel */
         /* a member's panel: 30-45 rows (the one whose turn it is: up to 80), framed in white */
-        if (y - y0 > 80) {                                        /* alone in the party: one panel, then the wood (no line below it) */
-            for (int yy = y0 + 30; yy < y0 + 80; yy++) {          /* it ends at its white bottom line */
-                int nw = 0; for (int x = 0; x < 256; x++) nw += (px[yy * 256 + x] & 0xFFFFFF) == c_frame;
-                if (nw > 200) { y = yy + 1; break; }
+        int solo_whole = 0;
+        if (y - y0 > 80 && n == 0) {                              /* alone in the party: one panel, then the wood (no line below it) */
+            int line = -1;                                        /* it ends at its white bottom line (on the left: a submenu can cover the rest) */
+            for (int yy = y0 + 30; yy < y0 + 80 && line < 0; yy++) {
+                int nw = 0; for (int x = 0; x < 100; x++) nw += (px[yy * 256 + x] & 0xFFFFFF) == c_frame;
+                if (nw > 80) line = yy;
+            }
+            if (line >= 0) {
+                int last = line;                                  /* a submenu's windows below it (over the wood): down to the last of them */
+                for (int yy = line + 1; yy < 192; yy++) {
+                    int nc = 0; for (int x = 0; x < 256; x++) { uint32_t c = px[yy * 256 + x] & 0xFFFFFF; nc += c == c_frame || c == 0x303030 || c == 0x414141; }
+                    if (nc > 20) last = yy;
+                }
+                g_hud_solo_h = line - y0 + 1;
+                y = last + 1;
+                solo_whole = last > line;
             }
         }
-        int h = y - y0, mid = (y0 + y) / 2, framed = 0;
+        int h = y - y0, mid = (y0 + (solo_whole ? y0 + g_hud_solo_h : y)) / 2, framed = 0;
         for (int x = 0; x < 16; x++) if ((px[mid * 256 + x] & 0xFFFFFF) == c_frame) framed = 1;
         if (!framed) continue;                                    /* the wood around the panels (above them in the attacks, below a party of 3) */
+        if (solo_whole) { crossed = 1; tall = 1; g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++; break; }   /* (one piece, as with a submenu) */
         if (n == 8 || h < 30 || h > 80 || (h >= 50 && tall++)) return;
         g_hud_band[n][0] = y0; g_hud_band[n][1] = y; n++;
     }

@@ -11,7 +11,7 @@ Dynamic Widescreen
   actions (the one choosing no longer jumps to the top).
 - **Fighting alone** shows your panel in the bottom left too, instead of
   the small screen in the corner, a panel's height higher so it's easy to
-  see.
+  see, and it stays there when you open spells, abilities or items.
 - **A long battle message** (Examine) that can't fit beside the panels
   goes above them instead of under them.
 - **Dialogue boxes stay in the middle** when their name tag and Yes/No sit
