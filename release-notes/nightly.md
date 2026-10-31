@@ -10,7 +10,8 @@ Dynamic Widescreen
 - **The party's panels keep their order** while you choose each one's
   actions (the one choosing no longer jumps to the top).
 - **Fighting alone** shows your panel in the bottom left too, instead of
-  the small screen in the corner.
+  the small screen in the corner, a panel's height higher so it's easy to
+  see.
 - **A long battle message** (Examine) that can't fit beside the panels
   goes above them instead of under them.
 - **Dialogue boxes stay in the middle** when their name tag and Yes/No sit

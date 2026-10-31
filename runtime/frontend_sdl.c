@@ -416,6 +416,7 @@ static void canvas_layout_for(GlPresent* v, int ww, int wh, int second) {
                     q[0] = 4; q[1] = 192 - h * k - gap; q[2] = 250 * k; q[3] = h * k; q[9] = see;
                     total = h * k + gap;
                 }
+                if (g_hud_n == 1) total += 40 * k + gap;              /* alone in the party: a panel's height higher, easier to see */
                 float y = 192 - total;
                 if (!(tall && g_hud_whole))                           /* in the party's order, as on the DS (the one choosing stays in its place) */
                     for (int i = 0; i < g_hud_n && v->npiece + 2 <= GL_MAX_PIECES; i++) {
