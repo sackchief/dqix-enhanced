@@ -22,6 +22,7 @@ typedef struct {
     int sub;                  /* a submenu: its MK_SUB entry's index */
     char label[160];
     const char* key;
+    int value;                /* changed with left / right (MF_VALUE) */
 } Row;
 enum { ROW_RESUME = 100 };
 
@@ -35,8 +36,47 @@ static unsigned g_gen_drawn;
 static int g_hover_rows[128][2], g_panel[4];   /* where each row was drawn (y0, y1), the panel (x, y, w, h): for the mouse */
 static int g_title_rows;
 
+static int (*g_val_get)(int id, char* out, size_t n);
+static void (*g_val_adj)(int id, int dir);
+
+/* a message or question inside the menu (instead of a window of its own) */
+static struct {
+    int on, n, sel, cancel, result, has_check, checked, focus_check;
+    char title[128], text[4096], btn[8][64], check[200];
+    int btn_rect[8][4], check_rect[4];
+} g_dlg;
+
 void ingame_menu_set_shells(const char* const* names, int n) { g_shells = names; g_nshells = n; }
-int ingame_menu_is_open(void) { return g_open; }
+void ingame_menu_set_values(int (*get)(int id, char* out, size_t n), void (*adjust)(int id, int dir)) { g_val_get = get; g_val_adj = adjust; }
+int ingame_menu_is_open(void) { return g_open || g_dlg.on; }
+
+void ingame_dialog_begin(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel, const char* check, int checked) {
+    memset(&g_dlg, 0, sizeof g_dlg);
+    g_dlg.on = 1; g_dlg.result = -1;
+    snprintf(g_dlg.title, sizeof g_dlg.title, "%s", title ? title : "");
+    snprintf(g_dlg.text, sizeof g_dlg.text, "%s", text ? text : "");
+    if (n > 8) n = 8;
+    if (n < 1) { n = 1; snprintf(g_dlg.btn[0], 64, "OK"); }
+    else for (int i = 0; i < n; i++) snprintf(g_dlg.btn[i], 64, "%s", buttons[i]);
+    g_dlg.n = n; g_dlg.sel = def >= 0 && def < n ? def : 0; g_dlg.cancel = cancel;
+    if (check) { g_dlg.has_check = 1; snprintf(g_dlg.check, sizeof g_dlg.check, "%s", check); g_dlg.checked = checked != 0; }
+    g_dirty = 1;
+}
+int ingame_dialog_result(int* checked) {
+    if (g_dlg.on) return -1;
+    if (checked) *checked = g_dlg.checked;
+    return g_dlg.result;
+}
+static void dlg_done(int r) { g_dlg.result = r; g_dlg.on = 0; g_dirty = 1; }
+static void dlg_key(int k) {                 /* 'U' 'D' 'L' 'R' 'A' (choose) 'B' (cancel) */
+    if (k == 'L' && !g_dlg.focus_check) g_dlg.sel = (g_dlg.sel + g_dlg.n - 1) % g_dlg.n;
+    else if (k == 'R' && !g_dlg.focus_check) g_dlg.sel = (g_dlg.sel + 1) % g_dlg.n;
+    else if (k == 'U' && g_dlg.has_check) g_dlg.focus_check = 1;
+    else if (k == 'D') g_dlg.focus_check = 0;
+    else if (k == 'A') { if (g_dlg.focus_check) g_dlg.checked = !g_dlg.checked; else dlg_done(g_dlg.sel); }
+    else if (k == 'B') dlg_done(g_dlg.cancel >= 0 ? g_dlg.cancel : g_dlg.n - 1);
+    g_dirty = 1;
+}
 
 static void build_rows(void) {
     g_nrows = 0;
@@ -58,8 +98,9 @@ static void build_rows(void) {
             continue;
         }
         Row* r = &g_rows[g_nrows++]; memset(r, 0, sizeof *r);
-        r->kind = it->kind; r->id = it->id; r->sub = i; r->key = it->key;
+        r->kind = it->kind; r->id = it->id; r->sub = i; r->key = it->key; r->value = (it->flags & MF_VALUE) != 0;
         if (it->label) menu_plain_label(it->label, r->label, sizeof r->label);
+        if (r->value) { size_t n = strlen(r->label); while (n && r->label[n - 1] == '.') r->label[--n] = 0; r->key = NULL; }   /* "Volume..." -> "Volume" */
         if (it->kind == MK_SUB) level++;
         if (it->kind == MK_SEP && (g_nrows == 1 || g_rows[g_nrows - 2].kind == MK_SEP)) g_nrows--;   /* (no separator first or twice) */
     }
@@ -107,16 +148,30 @@ static void choose(int* action) {
         build_rows(); fix_sel(1); g_dirty = 1;
         return;
     }
+    if (r->value) { if (g_val_adj) g_val_adj(r->id, 1); g_dirty = 1; return; }   /* A on a value: up one step */
     if (r->kind == MK_ITEM) {
         *action = r->id; g_dirty = 1;
         /* things that leave the game or open a window of their own: the menu closes first */
         if (r->id == MI_EXIT || r->id == MI_RESET || r->id == MI_SES_HOST || r->id == MI_SES_JOIN || r->id == MI_SEND_REPORT ||
-            r->id == MI_REPORT || r->id == MI_SHOT || r->id == MI_UPDATE) ingame_menu_close();
+            r->id == MI_REPORT || r->id == MI_SHOT) ingame_menu_close();
     }
 }
 
+static int on_value(void) { return g_open && g_nrows && g_rows[g_sel[g_depth]].value; }
 int ingame_menu_key(SDL_Scancode k, int* action) {
+    if (g_dlg.on) {
+        int isA = g_ctl_key[CA_A][0] && (int)k == (g_ctl_key[CA_A][0] & 0xFFFF), isB = g_ctl_key[CA_B][0] && (int)k == (g_ctl_key[CA_B][0] & 0xFFFF);
+        if (k == SDL_SCANCODE_LEFT) dlg_key('L'); else if (k == SDL_SCANCODE_RIGHT || k == SDL_SCANCODE_TAB) dlg_key('R');
+        else if (k == SDL_SCANCODE_UP) dlg_key('U'); else if (k == SDL_SCANCODE_DOWN) dlg_key('D');
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || isA) dlg_key('A');
+        else if (k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_BACKSPACE || isB) dlg_key('B');
+        return 1;
+    }
     if (!g_open) return 0;
+    if (on_value() && (k == SDL_SCANCODE_LEFT || k == SDL_SCANCODE_RIGHT)) {
+        if (g_val_adj) g_val_adj(g_rows[g_sel[g_depth]].id, k == SDL_SCANCODE_RIGHT ? 1 : -1);
+        g_dirty = 1; return 1;
+    }
     if (k == SDL_SCANCODE_UP) move(-1);
     else if (k == SDL_SCANCODE_DOWN) move(1);
     else if (k == SDL_SCANCODE_PAGEUP) for (int i = 0; i < 6; i++) move(-1);
@@ -136,8 +191,8 @@ int ingame_menu_key(SDL_Scancode k, int* action) {
 
 /* the controller, every frame while open: the D-pad and the left stick repeat while held */
 void ingame_menu_pad(SDL_GameController* p, int* action, uint32_t now_ms) {
-    if (!g_open || !p) return;
-    static int was_a = 1, was_b = 1, was_menu = 1, held_dir; static uint32_t next;
+    if (!(g_open || g_dlg.on) || !p) return;
+    static int was_a = 1, was_b = 1, was_menu = 1, held_dir, held_x; static uint32_t next, next_x;
     int a = g_ctl_pad[CA_A] >= 0 && controls_pad_down(p, g_ctl_pad[CA_A]);
     int b = g_ctl_pad[CA_B] >= 0 && controls_pad_down(p, g_ctl_pad[CA_B]);
     int m = g_ctl_pad[CA_MENU] >= 0 && controls_pad_down(p, g_ctl_pad[CA_MENU]);
@@ -146,6 +201,21 @@ void ingame_menu_pad(SDL_GameController* p, int* action, uint32_t now_ms) {
               SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || y > 20000 ? 1 : 0;
     int right = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_DPAD_RIGHT), left = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
     static int was_r = 1, was_l = 1;
+    int x = SDL_GameControllerGetAxis(p, SDL_CONTROLLER_AXIS_LEFTX);
+    int xdir = left || x < -20000 ? -1 : right || x > 20000 ? 1 : 0;
+    if (g_dlg.on) {                                                  /* a message: left / right between its buttons */
+        if (dir != held_dir) { held_dir = dir; if (dir) dlg_key(dir < 0 ? 'U' : 'D'); }
+        if (xdir != held_x) { held_x = xdir; if (xdir) dlg_key(xdir < 0 ? 'L' : 'R'); }
+        if (a && !was_a) dlg_key('A'); else if (b && !was_b) dlg_key('B');
+        was_a = a; was_b = b; was_menu = m; was_r = right; was_l = left;
+        if (!g_dlg.on) { was_a = was_b = 1; }
+        return;
+    }
+    if (on_value()) {                                                /* a value: left / right change it, repeating while held */
+        if (xdir != held_x) { held_x = xdir; if (xdir && g_val_adj) { g_val_adj(g_rows[g_sel[g_depth]].id, xdir); g_dirty = 1; next_x = now_ms + 380; } }
+        else if (xdir && (int32_t)(now_ms - next_x) >= 0 && g_val_adj) { g_val_adj(g_rows[g_sel[g_depth]].id, xdir); g_dirty = 1; next_x = now_ms + 110; }
+        right = left = 0;
+    } else held_x = xdir;
     if (dir != held_dir) { held_dir = dir; if (dir) { move(dir); next = now_ms + 380; } }
     else if (dir && (int32_t)(now_ms - next) >= 0) { move(dir); next = now_ms + 90; }
     if (a && !was_a) choose(action);
@@ -158,7 +228,20 @@ void ingame_menu_pad(SDL_GameController* p, int* action, uint32_t now_ms) {
 }
 
 /* the mouse (window pixels): pointing chooses the row, a click picks it, the right button goes back */
+static int in_rect(const int* r, int x, int y) { return r[2] > 0 && x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]; }
 int ingame_menu_mouse(const SDL_Event* e, int* action) {
+    if (g_dlg.on) {
+        if (e->type == SDL_MOUSEWHEEL) return 1;
+        int x = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, y = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
+        for (int i = 0; i < g_dlg.n; i++) if (in_rect(g_dlg.btn_rect[i], x, y)) {
+            if (e->type == SDL_MOUSEMOTION) { if (g_dlg.sel != i || g_dlg.focus_check) { g_dlg.sel = i; g_dlg.focus_check = 0; g_dirty = 1; } }
+            else if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT) dlg_done(i);
+            return 1;
+        }
+        if (g_dlg.has_check && in_rect(g_dlg.check_rect, x, y) && e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT) { g_dlg.checked = !g_dlg.checked; g_dirty = 1; }
+        if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_RIGHT) dlg_key('B');
+        return 1;
+    }
     if (!g_open) return 0;
     if (e->type == SDL_MOUSEWHEEL) { int n = e->wheel.y > 0 ? -1 : 1; for (int i = 0; i < 3; i++) move(n); return 1; }
     int x = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, y = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
@@ -211,10 +294,35 @@ static void text_fit(int x, int y, int max_w, float px, uint32_t c, const char* 
     text_draw(g_rgb, g_w, g_h, x, y, px, c, t);
 }
 
+/* text in lines that fit max_w (breaks at spaces and \n); draw 0: only measures. Returns the height. */
+static int text_lines(int x, int y, int max_w, float px, uint32_t c, const char* s, int draw) {
+    int line = (int)(px * 1.3f), h = 0;
+    char buf[400];
+    while (*s) {
+        if (*s == '\n') { s++; h += line / 2 + (h ? line / 2 : 0); continue; }
+        size_t best = 0, i = 0;
+        for (;;) {                                                      /* the longest run of whole words that fits */
+            size_t j = i; while (s[j] && s[j] != ' ' && s[j] != '\n') j++;
+            if (j >= sizeof buf) j = sizeof buf - 1;
+            memcpy(buf, s, j); buf[j] = 0;
+            if (text_width(px, buf) > max_w && best) break;
+            best = j;
+            if (!s[j] || s[j] == '\n' || j >= sizeof buf - 1) break;
+            i = j + 1;
+        }
+        memcpy(buf, s, best); buf[best] = 0;
+        if (draw) text_draw(g_rgb, g_w, g_h, x, y + h, px, c, buf);
+        h += line;
+        s += best; while (*s == ' ') s++;
+        if (*s == '\n') s++;
+    }
+    return h;
+}
+
 /* The menu's layer for a window of w x h pixels: RGBA, rows top-down; NULL
  * when nothing changed since the last call (*w and *h stay as given). */
 const uint8_t* ingame_menu_draw(int w, int h, int force) {
-    if (!g_open || w <= 0 || h <= 0) return NULL;
+    if (!(g_open || g_dlg.on) || w <= 0 || h <= 0) return NULL;
     if (!force && !g_dirty && w == g_w && h == g_h && g_gen_drawn == menu_generation()) return NULL;
     if (w != g_w || h != g_h || !g_rgb) {
         free(g_rgb); free(g_alpha); free(g_out);
@@ -225,6 +333,53 @@ const uint8_t* ingame_menu_draw(int w, int h, int force) {
     g_dirty = 0; g_gen_drawn = menu_generation();
     memset(g_rgb, 0, (size_t)w * h * 4);
     memset(g_alpha, 110, (size_t)w * h);                               /* the game, dimmed behind it */
+    if (g_dlg.on) {                                                     /* a message or question */
+        const uint32_t BG = 0x101A3A, SEL = 0x2F4C8C, WHITE = 0xFFFFFF, GREY = 0x8A93AE, GOLD = 0xF8D860;
+        float px = h * 0.032f; if (px < 14) px = 14; if (px > 38) px = 38;
+        int pw = (int)(px * 32); if (pw > w - 2 * (int)px) pw = w - 2 * (int)px;
+        int pad = (int)(px * 1.2f), line = px > 24 ? 3 : 2, head = (int)(px * 2.1f), bh = (int)(px * 1.9f);
+        int chk = g_dlg.has_check ? (int)(px * 2.2f) : 0;
+        int room = h - 2 * (int)px - head - bh - chk - 3 * pad;
+        float tp = px;                                                  /* a long text: smaller letters, so it all shows */
+        while (tp > 11 && text_lines(0, 0, pw - 2 * pad, tp, 0, g_dlg.text, 0) > room) tp -= 1;
+        int th = text_lines(0, 0, pw - 2 * pad, tp, 0, g_dlg.text, 0);
+        int ph = head + th + chk + bh + 3 * pad; if (ph > h - 8) ph = h - 8;
+        int x0 = (w - pw) / 2, y0 = (h - ph) / 2;
+        g_panel[0] = x0; g_panel[1] = y0; g_panel[2] = pw; g_panel[3] = ph;
+        fill(x0, y0, pw, ph, BG, 240);
+        frame(x0 + line, y0 + line, pw - 2 * line, ph - 2 * line, line, WHITE);
+        text_fit(x0 + pad, y0 + (head - (int)px) / 2, pw - 2 * pad, px * 1.05f, GOLD, g_dlg.title);
+        fill(x0 + pad, y0 + head - line, pw - 2 * pad, line, 0x3A4670, 255);
+        text_lines(x0 + pad, y0 + head + pad, pw - 2 * pad, tp, WHITE, g_dlg.text, 1);
+        int cy = y0 + head + pad + th + pad / 2;
+        memset(g_dlg.check_rect, 0, sizeof g_dlg.check_rect);
+        if (g_dlg.has_check) {                                          /* a check box ("Don't ask again") */
+            int bs = (int)(px * 0.9f), rx = x0 + pad, ry = cy + (chk - bs) / 2;
+            if (g_dlg.focus_check) fill(x0 + line * 3, cy, pw - line * 6, chk, SEL, 255);
+            frame(rx, ry, bs, bs, line, WHITE);
+            if (g_dlg.checked) tick(rx + bs / 6, ry, (int)(bs * 0.8f), GOLD);
+            text_fit(rx + bs + (int)(px * 0.6f), cy + (chk - (int)px) / 2, pw - 2 * pad - bs, px * 0.9f, WHITE, g_dlg.check);
+            g_dlg.check_rect[0] = x0; g_dlg.check_rect[1] = cy; g_dlg.check_rect[2] = pw; g_dlg.check_rect[3] = chk;
+        }
+        /* the buttons, side by side at the bottom (a long row: smaller) */
+        float bp = px; int gap = (int)(px * 0.8f), tot;
+        for (;;) { tot = 0; for (int i = 0; i < g_dlg.n; i++) tot += text_width(bp, g_dlg.btn[i]) + (int)(bp * 2) + gap; tot -= gap;
+                   if (tot <= pw - 2 * pad || bp <= 11) break; bp -= 1; }
+        int bx = x0 + pw - pad - tot, by = y0 + ph - pad - bh;
+        if (bx < x0 + pad) bx = x0 + pad;
+        for (int i = 0; i < g_dlg.n; i++) {
+            int bw = text_width(bp, g_dlg.btn[i]) + (int)(bp * 2);
+            int on = i == g_dlg.sel && !g_dlg.focus_check;
+            fill(bx, by, bw, bh, on ? SEL : 0x1C2850, 255);
+            frame(bx, by, bw, bh, line > 2 ? 2 : 1, on ? WHITE : GREY);
+            text_draw(g_rgb, g_w, g_h, bx + (int)bp, by + (bh - (int)bp) / 2, bp, on ? WHITE : 0xC8D0E8, g_dlg.btn[i]);
+            g_dlg.btn_rect[i][0] = bx; g_dlg.btn_rect[i][1] = by; g_dlg.btn_rect[i][2] = bw; g_dlg.btn_rect[i][3] = bh;
+            bx += bw + gap;
+        }
+        for (int j = y0; j < y0 + ph && j < h; j++) for (int i = x0; i < x0 + pw && i < w; i++) if (j >= 0 && i >= 0) g_alpha[j * w + i] = 245;
+        (void)GREY;
+        goto out;
+    }
 
     float px = h * 0.034f; if (px < 15) px = 15; if (px > 42) px = 42;   /* readable on a handheld and a big monitor alike */
     int row_h = (int)(px * 1.55f), pad = (int)(px * 1.2f), line = px > 24 ? 3 : 2;
@@ -269,7 +424,15 @@ const uint8_t* ingame_menu_draw(int w, int h, int force) {
         if (i == sel) tri_right(cx - (int)(px * 0.7f), ty + (int)(px * 0.2f), (int)(px * 0.6f), WHITE);   /* the pointer */
         if (r->kind == MK_ITEM && menu_is_checked(r->id)) tick(cx, ty + (int)(px * 0.05f), (int)(px * 0.8f), en ? GOLD : GREY);
         int lx = cx + (int)(px * 1.2f), right = x0 + pw - pad;
-        if (r->kind == MK_SUB) { tri_right(right - (int)(px * 0.4f), ty + (int)(px * 0.25f), (int)(px * 0.55f), en ? DIM : GREY); right -= (int)(px * 0.9f); }
+        if (r->value && g_val_get) {                                   /* a value: < 70% > */
+            char v[64]; g_val_get(r->id, v, sizeof v);
+            int vw = text_width(px, v), aw = (int)(px * 0.55f);
+            tri_right(right - aw, ty + (int)(px * 0.25f), aw, i == sel ? WHITE : GREY);
+            text_draw(g_rgb, g_w, g_h, right - aw - (int)(px * 0.4f) - vw, ty, px, GOLD, v);
+            tri_left(right - aw - (int)(px * 0.8f) - vw - aw, ty + (int)(px * 0.25f), aw, i == sel ? WHITE : GREY);
+            right -= vw + 2 * aw + (int)(px * 1.6f);
+        }
+        else if (r->kind == MK_SUB) { tri_right(right - (int)(px * 0.4f), ty + (int)(px * 0.25f), (int)(px * 0.55f), en ? DIM : GREY); right -= (int)(px * 0.9f); }
         else if (r->key) {
             int kw = text_width(px * 0.8f, r->key);
             text_draw(g_rgb, g_w, g_h, right - kw, ty + (int)(px * 0.12f), px * 0.8f, GREY, r->key);
@@ -288,6 +451,7 @@ const uint8_t* ingame_menu_draw(int w, int h, int force) {
     text_fit(x0 + pad, y0 + ph - foot + (foot - (int)(px * 0.8f)) / 2, pw - 2 * pad, px * 0.8f, GREY,
              g_depth ? "A / Enter: choose     B / Esc: back" : "A / Enter: choose     B / Esc: back to the game");
 
+out:
     for (int i = 0; i < w * h; i++) {
         uint32_t c = g_rgb[i];
         g_out[i * 4] = (uint8_t)(c >> 16); g_out[i * 4 + 1] = (uint8_t)(c >> 8); g_out[i * 4 + 2] = (uint8_t)c; g_out[i * 4 + 3] = g_alpha[i];

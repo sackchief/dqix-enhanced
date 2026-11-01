@@ -35,7 +35,8 @@ enum {
  * built from this list. A submenu runs from MK_SUB to its MK_END; MK_SHELLS
  * stands for the console colours (MI_SHELLC0 + i); MK_STOP ends the list. */
 enum { MK_STOP, MK_SUB, MK_END, MK_ITEM, MK_SEP, MK_SHELLS };
-enum { MF_WINDOWS = 1 };                      /* opens a window of Windows' own (not in the in-game menu elsewhere yet) */
+enum { MF_WINDOWS = 1,                        /* opens a window of Windows' own (not in the in-game menu elsewhere yet) */
+       MF_VALUE = 2 };                         /* in the in-game menu: a value changed with left / right (the volume) */
 typedef struct { unsigned char kind; int id; const char* label; const char* key; int flags; } MenuItem;
 extern const MenuItem g_menu_items[];
 int menu_is_checked(int id);

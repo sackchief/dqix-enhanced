@@ -11,6 +11,11 @@ adventure; try this one in its own folder with a copy of your save.
   so Esc no longer quits or leaves fullscreen by itself. The menu bar is
   still there on Windows; both are made from one list of options, so they
   always match. Its button can be changed in Game > Controls.
+- **Messages and questions show inside the game** instead of in windows
+  of their own: About, the help texts, "Reset?", "Quit?", the update
+  offer, the bug report's questions. Left / right choose a button.
+- **The volume is changed right in the menu** (Game > Volume: left /
+  right).
 
 See ROADMAP.md for what's planned.
 

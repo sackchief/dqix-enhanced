@@ -786,6 +786,8 @@ static void audio_cb(void* u, Uint8* stream, int len) {
 
 /* Window size = canvas x scale, made smaller if it would not fit on the screen. */
 static void menu_sync(void);
+static int menu_value_get(int id, char* out, size_t n);
+static void menu_value_adjust(int id, int dir);
 /* keep: the layout changed (swap, single screen, another layout): keep the
  * size the player gave the window - the same if the picture keeps its shape,
  * else the new shape at the same zoom. Otherwise (window size, actual size,
@@ -998,7 +1000,8 @@ void frontend_init(int argc, char** argv) {
         menu_init(g_win, names, N_SHELLS);
         {   static const char* keep[N_DRAWN + MAX_SKINS];             /* (the in-game menu keeps them) */
             for (int i = 0; i < N_SHELLS; i++) keep[i] = names[i];
-            ingame_menu_set_shells(keep, N_SHELLS); }
+            ingame_menu_set_shells(keep, N_SHELLS);
+            ingame_menu_set_values(menu_value_get, menu_value_adjust); }
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -1697,9 +1700,61 @@ static const char* CONTROLS_TEXT =
     "F11 or Alt+Enter fullscreen (mouse at the top: menu bar)   F12 screenshot   F10 bug report   Esc leave fullscreen / quit (asks first)\n"
     "In fullscreen, double-click outside the touch screen to go back to the window.";
 
+/* the in-game menu's values (left / right): the volume */
+static void settings_save(void);
+static void menu_sync(void);
+static int menu_value_get(int id, char* out, size_t n) {
+    if (id == MI_VOLUME) { if (g_mute) snprintf(out, n, "Off"); else snprintf(out, n, "%d%%", g_volume); return 1; }
+    snprintf(out, n, "-"); return 0;
+}
+static void menu_value_adjust(int id, int dir) {
+    if (id != MI_VOLUME) return;
+    if (g_mute && dir > 0) g_mute = 0;
+    else { g_volume += dir * 10; g_volume = g_volume < 0 ? 0 : g_volume > 100 ? 100 : g_volume; g_mute = 0; }
+    volume_window_refresh(); settings_save(); menu_sync();
+}
+
+/* A message or question inside the in-game menu, not a window of its own (the
+ * same on every system, with a controller too). -2: not possible here (no
+ * OpenGL window yet, or one is already showing): the caller uses a window. */
+static void handle_events(void);
+static void present(void);
+static int g_menu_release;                                   /* the in-game menu just closed: the buttons wait to be let go */
+static int ingame_dialog_run(const char* title, const char* text, const char* const* b, int n, int def, int cancel, const char* check, int* checked) {
+    static int busy;
+    if (!g_gl || !g_win || g_hidden || busy) return -2;
+    busy = 1;
+    ingame_dialog_begin(title, text, b, n, def, cancel, check, checked ? *checked : 0);
+    int r;
+    static int tests = -1; if (tests < 0) tests = getenv("DQIX_MENU_TEST") != NULL;
+    if (tests) {                                              /* tests: the message saved as a picture, its default chosen */
+        static int k; int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
+        present();
+        uint8_t* rgb = gl_read_window(w, h); char path[32]; snprintf(path, sizeof path, "dialog%02d.ppm", k++);
+        FILE* f = fopen(path, "wb"); if (f) { fprintf(f, "P6\n%d %d\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); } free(rgb);
+        int key = SDL_SCANCODE_RETURN, a = 0; ingame_menu_key((SDL_Scancode)key, &a);
+    }
+    while ((r = ingame_dialog_result(checked)) < 0) {
+        int act = 0;
+        handle_events();
+        ingame_menu_pad(g_pad, &act, SDL_GetTicks());
+        present(); SDL_Delay(15);
+    }
+    g_next_frame = SDL_GetPerformanceCounter();                 /* the game waited: don't race to catch up */
+    g_menu_release = 1;
+    busy = 0;
+    return r;
+}
+static int choice_any(const char* title, const char* text, const char* const* b, int n, int def, int cancel, const char* check, int* checked) {
+    int r = ingame_dialog_run(title, text, b, n, def, cancel, check, checked);
+    return r != -2 ? r : choice_box(g_win, title, text, b, n, def, cancel, check, checked);
+}
+
 /* A message box whose long lines are wrapped (the system boxes size themselves
  * to the longest line, which made the help as wide as the screen). */
 static int info_box(Uint32 flags, const char* title, const char* text, SDL_Window* win) {
+    {   static const char* ok[1] = { "OK" };                   /* in the game's own window when it can */
+        if (ingame_dialog_run(title, text, ok, 1, 0, 0, NULL, NULL) != -2) return 0; }
     size_t n = strlen(text);
     char* out = malloc(n * 2 + 1);
     if (!out) return SDL_ShowSimpleMessageBox(flags, title, text, win);
@@ -1919,7 +1974,7 @@ static void report_send(const char* dir, const char* description) {
         "Nothing is sent until you press Submit on GitHub.";
     int with_saves = 1;
     const char* b[2] = { "Open GitHub", "Don't send" };
-    int r = choice_box(g_win, "Send the bug report", WARN, b, 2, 0, 1, "Include my save file (it makes the problem much easier to find)", &with_saves);
+    int r = choice_any("Send the bug report", WARN, b, 2, 0, 1, "Include my save file (it makes the problem much easier to find)", &with_saves);
     if (r < 0) {                                                  /* no Windows dialog: three buttons instead of the tick */
         const char* b3[3] = { "Send with my save", "Send without my save", "Don't send" };
         int r3 = choose("Send the bug report", WARN, b3, 3, 0, 2);
@@ -1991,7 +2046,7 @@ static void report_send(const char* dir, const char* description) {
 /* A message with buttons: Windows' own dialog (buttons sized to their words),
  * SDL's elsewhere. Returns the chosen button's index, or `cancel`. */
 static int choose(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel) {
-    int r = choice_box(g_win, title, text, buttons, n, def, cancel, NULL, NULL);
+    int r = choice_any(title, text, buttons, n, def, cancel, NULL, NULL);
     if (r >= 0) return r;
     SDL_MessageBoxButtonData b[8];
     if (n > 8) n = 8;
@@ -2015,7 +2070,7 @@ static void quit_ask(void) {
     static const char* b[2] = { "Quit", "Keep playing" };
     static const char TEXT[] = "Quit Dragon Quest IX?\n\nAnything since you last saved in the game will be lost.";
     int dont = 0;
-    int r = choice_box(g_win, "Quit", TEXT, b, 2, 1, 1, "Don't ask again", &dont);
+    int r = choice_any("Quit", TEXT, b, 2, 1, 1, "Don't ask again", &dont);
     if (r < 0) r = choose("Quit", TEXT, b, 2, 1, 1);
     asking = 0;
     g_next_frame = SDL_GetPerformanceCounter();                 /* the game waited: don't race to catch up */
@@ -2284,7 +2339,6 @@ static void idle_pump(void) {
     SDL_SetWindowTitle(g_win, t);
 }
 
-static int g_menu_release;                                   /* the in-game menu just closed: the buttons wait to be let go */
 static void do_action(int id) {
     int relayout = 0;
     switch (id) {
@@ -2576,8 +2630,8 @@ static void do_action(int id) {
     case MI_ABOUT:
         info_box(SDL_MESSAGEBOX_INFORMATION, "About",
             "Dragon Quest IX for PC, " DQIX_VERSION " (" DQIX_VERSION_DATE "), built " __DATE__ "\n\n"
-            "Classic draws the game exactly like the DS; Enhanced draws its 3D\n"
-            "on the graphics card at up to 4x.\n\n"
+            "Classic draws the game exactly like the DS; Enhanced draws its 3D "
+            "on the graphics card at up to 12x.\n\n"
             "DS Lite screen colours: Pokefan531's measured DS Lite profile.", g_win);
         break;
     default:

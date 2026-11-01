@@ -17,7 +17,7 @@ const MenuItem g_menu_items[] = {
         IT(MI_TURBO, "&Fast forward", "Tab"),
         IT(MI_RESET, "&Reset...", "Ctrl+R"),
         SEP,
-        WIN(MI_VOLUME, "&Volume...", "- / ="),
+        { MK_ITEM, MI_VOLUME, "&Volume...", "- / =", MF_VALUE },     /* (in-game: changed right there) */
         IT(MI_MUTE, "&Mute", NULL),
         WIN(MI_CONTROLS_EDIT, "&Controls...", NULL),
         SUB("&Language (European version)"),
