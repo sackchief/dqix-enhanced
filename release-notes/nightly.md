@@ -29,6 +29,11 @@ adventure; try this one in its own folder with a copy of your save.
   - **Playing with friends**: the code to give out, who has joined, and
     Start / Copy the code / Cancel, inside the game.
 
+- **Fewer messages through the relay** ("Join with a code"): the host
+  sends one message for all its friends instead of one each, about a
+  sixth fewer with three players and a third fewer with four, so the
+  relay's daily allowance lasts longer. Works with the old relay too.
+
 See ROADMAP.md for what's planned.
 
 **How to install**: download *Source code (zip)* below, unzip it and
