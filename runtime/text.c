@@ -19,8 +19,9 @@ static int g_state;                        /* 0 not tried, 1 ok, -1 none */
 static int load(void) {
     if (g_state) return g_state > 0;
     g_state = -1;
-    char paths[8][300];
+    char paths[10][300];
     int n = 0;
+    snprintf(paths[n++], 300, "fonts/small.ttf");          /* the game's own (Nunito, as for HD text): the same everywhere */
     const char* win = getenv("WINDIR");
     if (win) {
         snprintf(paths[n++], 300, "%s\\Fonts\\segoeui.ttf", win);
@@ -92,6 +93,11 @@ static int draw_n(uint32_t* buf, int w, int h, int x0, int y0, float px, uint32_
         x += scale * (float)adv; prev = c;
     }
     return (int)x - x0;
+}
+
+int text_width(float px, const char* s) {
+    if (!load()) return 0;
+    return measure(stbtt_ScaleForPixelHeight(&g_font, px), s, s + strlen(s));
 }
 
 int text_draw(uint32_t* buf, int w, int h, int x, int y, float px, uint32_t color, const char* s) {

@@ -1,6 +1,6 @@
 /* Which keys and controller buttons do what (Game > Controls, controls.ini).
  * Every action has up to two keyboard keys and one controller button. The
- * DS's buttons are actions too; Esc (leave fullscreen / quit) and Alt+Enter
+ * DS's buttons are actions too; Esc (the in-game menu) and Alt+Enter
  * (fullscreen) stay fixed, and so do the sticks (walking, the camera). */
 #pragma once
 #include "SDL.h"
@@ -14,7 +14,7 @@ enum {
     /* the program's own */
     CA_FAST = CA_N_DS, CA_PAUSE, CA_FULL, CA_LAYOUT, CA_SINGLE, CA_SWAP, CA_CORNER, CA_SMALLSIZE, CA_OPACITY,
     CA_WINSIZE, CA_RES3D, CA_MODE, CA_LCD, CA_SHELL, CA_ACTUAL,
-    CA_VOLDOWN, CA_VOLUP, CA_RESET, CA_SHOT, CA_REPORT, CA_HDTEXT, CA_COMPARE,
+    CA_VOLDOWN, CA_VOLUP, CA_RESET, CA_SHOT, CA_REPORT, CA_HDTEXT, CA_COMPARE, CA_MENU,
     CA_N
 };
 

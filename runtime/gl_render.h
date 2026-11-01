@@ -44,8 +44,12 @@ typedef struct {
     float piece[24][10];                              /* ...each: x, y, w, h on the canvas; screen (0 top, 1 bottom); x, y, w, h on it;
                                                        * see-through: 0 solid, else how solid its fill is (its white lines and letters stay solid) */
     int held;                                         /* show the picture kept by gl_hold() instead of this frame's */
+    int overlay;                                      /* draw the in-game menu's layer on top (gl_set_overlay) */
 } GlPresent;
 #define GL_MAX_PIECES 24
+/* The in-game menu's layer: RGBA, rows top-down, the window's size; drawn over
+ * the picture when GlPresent.overlay is set. rgba NULL: none. */
+void gl_set_overlay(const uint8_t* rgba, int w, int h);
 /* dynamic widescreen: the 3D screen's 2D windows moved right by px DS pixels (0: not); battle: only the battle messages */
 void gl_set_ui_shift(int px, int battle);
 int gl_ui_unshift(int* x, int y);

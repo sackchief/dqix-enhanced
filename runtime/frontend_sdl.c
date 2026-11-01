@@ -204,6 +204,7 @@ static void skins_scan(void) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image_write.h"                                  /* public domain (Sean Barrett): the report's window.png */
+#include "menu_ingame.h"                                      /* the in-game menu (Esc, the controller's Home) */
 #pragma GCC diagnostic pop
 
 /* The photo for the chosen console colour (if it is one), in the GPU. */
@@ -995,6 +996,9 @@ void frontend_init(int argc, char** argv) {
         for (int i = 0; i < N_DRAWN; i++) names[i] = SHELLS[i].name;
         for (int i = 0; i < g_nskins; i++) names[N_DRAWN + i] = g_skins[i].name;
         menu_init(g_win, names, N_SHELLS);
+        {   static const char* keep[N_DRAWN + MAX_SKINS];             /* (the in-game menu keeps them) */
+            for (int i = 0; i < N_SHELLS; i++) keep[i] = names[i];
+            ingame_menu_set_shells(keep, N_SHELLS); }
         if (g_update_auto && !session_requested() && update_project_dir()) update_check_async();
         update_actual();
         menu_sync();
@@ -1528,6 +1532,11 @@ static void present_gl(void) {
             v.badge[0] = v.ox + m; v.badge[1] = v.oy + ph - m - bh; v.badge[2] = bh * 1.8f; v.badge[3] = bh;
             (void)pw;
         }
+    }
+    if (ingame_menu_is_open()) {                                  /* the in-game menu over the picture */
+        const uint8_t* m = ingame_menu_draw(w, h, 0);
+        if (m) gl_set_overlay(m, w, h);
+        v.overlay = 1;
     }
     gl_present(&v);
     window_shot_hook(w, h, 0);
@@ -2275,6 +2284,7 @@ static void idle_pump(void) {
     SDL_SetWindowTitle(g_win, t);
 }
 
+static int g_menu_release;                                   /* the in-game menu just closed: the buttons wait to be let go */
 static void do_action(int id) {
     int relayout = 0;
     switch (id) {
@@ -2624,6 +2634,7 @@ static void hotkey(int a) {
     case CA_SHOT: do_action(MI_SHOT); break;
     case CA_REPORT: do_action(MI_REPORT); break;
     case CA_HDTEXT: do_action(MI_HD_TEXT); break;
+    case CA_MENU: if (g_gl) { if (ingame_menu_is_open()) ingame_menu_close(); else ingame_menu_open(); } break;
     }
 }
 
@@ -2678,6 +2689,27 @@ static void handle_events(void) {
     while (SDL_PollEvent(&e)) {
         int mi = menu_command(&e);
         if (mi) { do_action(mi); continue; }
+        if (ingame_menu_is_open() && g_win) {                     /* the in-game menu takes the keys and the mouse */
+            int act = 0, used = 0;
+            if (e.type == SDL_KEYDOWN && e.key.windowID == SDL_GetWindowID(g_win)) {
+                int a = e.key.repeat ? -1 : controls_key_action(e.key.keysym.scancode, e.key.keysym.mod);
+                if (a == CA_MENU) ingame_menu_close();
+                else used = ingame_menu_key(e.key.keysym.scancode, &act);
+                used = 1;
+            } else if ((e.type == SDL_MOUSEMOTION && e.motion.windowID == SDL_GetWindowID(g_win)) ||
+                       ((e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) && e.button.windowID == SDL_GetWindowID(g_win)) ||
+                       e.type == SDL_MOUSEWHEEL) {
+                int dw, dh, ww, wh; SDL_GL_GetDrawableSize(g_win, &dw, &dh); SDL_GetWindowSize(g_win, &ww, &wh);
+                SDL_Event c = e;                                      /* (drawable pixels: high-DPI screens) */
+                if (ww > 0 && wh > 0) {
+                    if (c.type == SDL_MOUSEMOTION) { c.motion.x = c.motion.x * dw / ww; c.motion.y = c.motion.y * dh / wh; }
+                    else if (c.type != SDL_MOUSEWHEEL) { c.button.x = c.button.x * dw / ww; c.button.y = c.button.y * dh / wh; }
+                }
+                used = ingame_menu_mouse(&c, &act);
+            } else if (e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT) used = 1;
+            if (act) do_action(act);
+            if (used) continue;
+        }
         switch (e.type) {
         case SDL_QUIT: quit_ask(); break;
         case SDL_KEYDOWN: {
@@ -2685,7 +2717,12 @@ static void handle_events(void) {
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
-            if (k == SDL_SCANCODE_ESCAPE) { if (in2 && g_win2_full) second_window_fullscreen(); else if (g_fullscreen) do_action(MI_FULL); else quit_ask(); break; }
+            if (k == SDL_SCANCODE_ESCAPE) {                          /* the in-game menu (Exit and Fullscreen are in it) */
+                if (in2 && g_win2_full) second_window_fullscreen();
+                else if (g_gl) ingame_menu_open();
+                else if (g_fullscreen) do_action(MI_FULL); else quit_ask();
+                break;
+            }
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }
             int a = controls_key_action(k, e.key.keysym.mod);
             if (a == CA_FULL && in2) { second_window_fullscreen(); settings_save(); break; }
@@ -2804,6 +2841,51 @@ void frontend_frame(void) {
         uint64_t tp = SDL_GetPerformanceCounter();
         present();
         pr->present = (float)ticks_ms(SDL_GetPerformanceCounter() - tp);
+        {   /* the in-game menu: Select + Start together also opens it (a controller without a Home button) */
+            static int was_combo = 1;
+            int combo = g_pad && g_gl && controls_pad_held(CA_START, g_pad) && controls_pad_held(CA_SELECT, g_pad) &&
+                        !controls_pad_held(CA_L, g_pad) && !controls_pad_held(CA_R, g_pad);   /* (+ L + R: reset) */
+            if (combo && !was_combo && !ingame_menu_is_open()) ingame_menu_open();
+            was_combo = combo;
+        }
+        {   /* DQIX_MENU_TEST=frame:keys (tests): the in-game menu opened then, the keys pressed one by one
+             * (U up, D down, E enter, B back, R right, L left), the window saved after each as menuNN.ppm */
+            static long long at = -2; static char keys[200];
+            if (at == -2) { const char* e = getenv("DQIX_MENU_TEST"); at = -1; if (e) { at = atoll(e); const char* c = strchr(e, ':'); snprintf(keys, sizeof keys, "%s", c ? c + 1 : ""); } }
+            if (at >= 0 && g_frame == (uint64_t)at && g_gl) {
+                ingame_menu_open();
+                int w, h; SDL_GL_GetDrawableSize(g_win, &w, &h);
+                for (int i = 0; ; i++) {
+                    present();
+                    { uint8_t* rgb = gl_read_window(w, h); char path[32]; snprintf(path, sizeof path, "menu%02d.ppm", i);
+                      FILE* f = fopen(path, "wb"); if (f) { fprintf(f, "P6\n%d %d\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); } free(rgb); }
+                    if (!keys[i] || !ingame_menu_is_open()) break;
+                    char k = keys[i]; int act = 0;
+                    SDL_Scancode sc = k == 'U' ? SDL_SCANCODE_UP : k == 'D' ? SDL_SCANCODE_DOWN : k == 'E' ? SDL_SCANCODE_RETURN :
+                                      k == 'B' ? SDL_SCANCODE_ESCAPE : k == 'R' ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_LEFT;
+                    ingame_menu_key(sc, &act);
+                    if (act) do_action(act);
+                }
+                ingame_menu_close();
+            }
+        }
+        if (ingame_menu_is_open()) {                          /* the game waits while it is open (playing with friends: it goes on) */
+            int alone = !session_requested();
+            do {
+                int act = 0;
+                handle_events();
+                ingame_menu_pad(g_pad, &act, SDL_GetTicks());
+                if (act) do_action(act);
+                if (alone && ingame_menu_is_open()) { present(); SDL_Delay(15); }
+            } while (alone && ingame_menu_is_open());
+            g_fe_keys = 0; g_fe_touch = 0;                        /* nothing of it reaches the game */
+            g_menu_release = 1;
+            if (alone) { g_next_frame = SDL_GetPerformanceCounter(); g_fps_t0 = 0; }
+        }
+        if (g_menu_release) {                                 /* after the menu: the game gets the buttons once they are let go */
+            if (g_fe_keys || g_fe_touch) { g_fe_keys = 0; g_fe_touch = 0; }
+            else g_menu_release = 0;
+        }
         if (g_paused) {                                       /* Game > Pause: keep the window alive, the game waits */
             update_title(0);
             while (g_paused) { handle_events(); present(); SDL_Delay(15); }

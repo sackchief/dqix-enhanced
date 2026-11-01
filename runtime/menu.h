@@ -3,6 +3,7 @@
  * chosen, and shows check marks. Elsewhere the functions do nothing. */
 #pragma once
 #include "SDL.h"
+#include <stddef.h>
 
 enum {
     MI_PAUSE = 100, MI_TURBO, MI_SHOT, MI_REPORT, MI_EXIT, MI_DLC,
@@ -29,6 +30,18 @@ enum {
     MI_SEND_REPORT = 210,
     MI_HUD = 320,                                                       /* widescreen battles: the HUD over the 3D */
 };
+
+/* Every option, once (menu_items.c): the menu bar and the in-game menu are
+ * built from this list. A submenu runs from MK_SUB to its MK_END; MK_SHELLS
+ * stands for the console colours (MI_SHELLC0 + i); MK_STOP ends the list. */
+enum { MK_STOP, MK_SUB, MK_END, MK_ITEM, MK_SEP, MK_SHELLS };
+enum { MF_WINDOWS = 1 };                      /* opens a window of Windows' own (not in the in-game menu elsewhere yet) */
+typedef struct { unsigned char kind; int id; const char* label; const char* key; int flags; } MenuItem;
+extern const MenuItem g_menu_items[];
+int menu_is_checked(int id);
+int menu_is_enabled(int id);
+unsigned menu_generation(void);               /* changes whenever a tick or a grey changes */
+void menu_plain_label(const char* in, char* out, size_t n);   /* "&Game" -> "Game" */
 
 /* shell_names: the console colours, in order (MI_SHELLC0 + i) */
 void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells);

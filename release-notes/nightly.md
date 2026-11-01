@@ -1,8 +1,18 @@
 **The newest work, less tested.** Use the stable release for your main
 adventure; try this one in its own folder with a copy of your save.
 
-**Right now the nightly is the same as stable v33.** The next nightly
-(v34-nightly1) will bring new work; see ROADMAP.md for what's planned.
+**What's new since v33**
+
+- **An in-game menu** (first version): **Esc**, or the controller's
+  **Home / Guide** button, or **Select + Start** together. Every option of
+  the menu bar, in a list over the game, for a controller, keyboard or
+  mouse: up / down to choose, A or Enter to pick, B or Esc to go back. The
+  game waits while it is open. Exit and Fullscreen are in it (Game, View),
+  so Esc no longer quits or leaves fullscreen by itself. The menu bar is
+  still there on Windows; both are made from one list of options, so they
+  always match. Its button can be changed in Game > Controls.
+
+See ROADMAP.md for what's planned.
 
 **How to install**: download *Source code (zip)* below, unzip it and
 double-click `Install Dragon Quest IX.bat`. Already playing? Use Help >
