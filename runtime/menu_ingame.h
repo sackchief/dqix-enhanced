@@ -24,3 +24,16 @@ void ingame_menu_set_values(int (*get)(int id, char* out, size_t n), void (*adju
  * chosen button; Esc / B: cancel). check: a check box's text (NULL: none). */
 void ingame_dialog_begin(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel, const char* check, int checked);
 int ingame_dialog_result(int* checked);
+void ingame_dialog_update(const char* title, const char* text);   /* a live message: new words, same buttons */
+int ingame_dialog_is_on(void);
+void ingame_dialog_cancel(void);
+/* A list to pick from (files, controls): rights: text at the right of each row
+ * (NULL: none). Result: -2 still open, -1 back, else the row chosen. */
+void ingame_list_begin(const char* title, const char* const* items, const char* const* rights, int n, int sel, const char* foot);
+int ingame_list_result(void);
+/* Typing: the keyboard types (pass SDL_TEXTINPUT to ingame_text_input), a
+ * controller or the mouse uses the keyboard drawn on the screen. Result: -2
+ * still typing, 0 cancelled, 1 done (the text in out). */
+void ingame_text_begin(const char* title, const char* prompt, const char* initial, int max);
+void ingame_text_input(const char* utf8);
+int ingame_text_result(char* out, size_t n);

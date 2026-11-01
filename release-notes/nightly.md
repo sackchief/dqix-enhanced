@@ -16,6 +16,18 @@ adventure; try this one in its own folder with a copy of your save.
   offer, the bug report's questions. Left / right choose a button.
 - **The volume is changed right in the menu** (Game > Volume: left /
   right).
+- **Nothing opens a window of its own any more**:
+  - **Controls**: every action with its keys and controller button in a
+    list; pick one, then press the new key or button.
+  - **Save file**: export and import choose a folder or a save in a list
+    inside the game (starting in Downloads, with Documents, Desktop and
+    the game's folder one step away).
+  - **Typing** (your name, a friend's code, a bug report's description):
+    type on the keyboard, or with a controller or the mouse use the
+    keyboard drawn on the screen (A a letter, B delete, X space,
+    Y capitals, Start done).
+  - **Playing with friends**: the code to give out, who has joined, and
+    Start / Copy the code / Cancel, inside the game.
 
 See ROADMAP.md for what's planned.
 

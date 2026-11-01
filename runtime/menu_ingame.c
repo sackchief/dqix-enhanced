@@ -48,7 +48,8 @@ static struct {
 
 void ingame_menu_set_shells(const char* const* names, int n) { g_shells = names; g_nshells = n; }
 void ingame_menu_set_values(int (*get)(int id, char* out, size_t n), void (*adjust)(int id, int dir)) { g_val_get = get; g_val_adj = adjust; }
-int ingame_menu_is_open(void) { return g_open || g_dlg.on; }
+static int pages_open(void);
+int ingame_menu_is_open(void) { return g_open || g_dlg.on || pages_open(); }
 
 void ingame_dialog_begin(const char* title, const char* text, const char* const* buttons, int n, int def, int cancel, const char* check, int checked) {
     memset(&g_dlg, 0, sizeof g_dlg);
@@ -62,6 +63,14 @@ void ingame_dialog_begin(const char* title, const char* text, const char* const*
     if (check) { g_dlg.has_check = 1; snprintf(g_dlg.check, sizeof g_dlg.check, "%s", check); g_dlg.checked = checked != 0; }
     g_dirty = 1;
 }
+void ingame_dialog_update(const char* title, const char* text) {     /* new words, the same buttons and choice (a live message) */
+    if (!g_dlg.on) return;
+    if (strcmp(g_dlg.title, title ? title : "") || strcmp(g_dlg.text, text ? text : "")) {
+        snprintf(g_dlg.title, sizeof g_dlg.title, "%s", title ? title : ""); snprintf(g_dlg.text, sizeof g_dlg.text, "%s", text ? text : ""); g_dirty = 1;
+    }
+}
+int ingame_dialog_is_on(void) { return g_dlg.on; }
+void ingame_dialog_cancel(void) { if (g_dlg.on) { g_dlg.result = g_dlg.cancel; g_dlg.on = 0; g_dirty = 1; } }
 int ingame_dialog_result(int* checked) {
     if (g_dlg.on) return -1;
     if (checked) *checked = g_dlg.checked;
@@ -157,8 +166,98 @@ static void choose(int* action) {
     }
 }
 
+/* ---------------------------------------------------------------- a list to pick from (files, controls) */
+static struct {
+    int on, n, sel, top, result;
+    char title[160], foot[200];
+    char (*text)[160]; char (*right)[80];
+    int rows[40][2];
+} g_lst;
+void ingame_list_begin(const char* title, const char* const* items, const char* const* rights, int n, int sel, const char* foot) {
+    free(g_lst.text); free(g_lst.right);
+    memset(&g_lst, 0, sizeof g_lst);
+    if (n < 0) n = 0;
+    g_lst.text = calloc((size_t)(n ? n : 1), sizeof *g_lst.text); g_lst.right = calloc((size_t)(n ? n : 1), sizeof *g_lst.right);
+    for (int i = 0; i < n; i++) {
+        snprintf(g_lst.text[i], sizeof g_lst.text[i], "%s", items[i] ? items[i] : "");
+        snprintf(g_lst.right[i], sizeof g_lst.right[i], "%s", rights && rights[i] ? rights[i] : "");
+    }
+    g_lst.on = 1; g_lst.n = n; g_lst.sel = sel >= 0 && sel < n ? sel : 0; g_lst.result = -2;
+    snprintf(g_lst.title, sizeof g_lst.title, "%s", title ? title : "");
+    snprintf(g_lst.foot, sizeof g_lst.foot, "%s", foot ? foot : "A / Enter: choose     B / Esc: back");
+    g_dirty = 1;
+}
+int ingame_list_result(void) { return g_lst.on ? -2 : g_lst.result; }   /* -2 open, -1 back, else the row */
+static void lst_move(int d) { if (g_lst.n) { g_lst.sel = (g_lst.sel + d + g_lst.n * 8) % g_lst.n; g_dirty = 1; } }
+static void lst_done(int r) { g_lst.result = r; g_lst.on = 0; g_dirty = 1; }
+
+/* ---------------------------------------------------------------- typing (a keyboard, or the one on the screen) */
+static const char* const OSK[2][4] = {
+    { "1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm.,'" },
+    { "!@#$%&*()?", "QWERTYUIOP", "ASDFGHJKL_", "ZXCVBNM:;/" },
+};
+enum { OSK_SHIFT = 10, OSK_SPACE, OSK_DEL, OSK_DONE };           /* the bottom row's keys (column numbers) */
+static struct {
+    int on, result, max, shift, kx, ky;                          /* kx, ky: the key chosen on the screen's keyboard */
+    char title[160], prompt[600], buf[1200];
+    int key_rect[5][11][4];
+} g_txt;
+void ingame_text_begin(const char* title, const char* prompt, const char* initial, int max) {
+    memset(&g_txt, 0, sizeof g_txt);
+    g_txt.on = 1; g_txt.result = -2; g_txt.max = max > 0 && max < (int)sizeof g_txt.buf ? max : (int)sizeof g_txt.buf - 1;
+    snprintf(g_txt.title, sizeof g_txt.title, "%s", title ? title : "");
+    snprintf(g_txt.prompt, sizeof g_txt.prompt, "%s", prompt ? prompt : "");
+    snprintf(g_txt.buf, sizeof g_txt.buf, "%s", initial ? initial : "");
+    g_txt.kx = 0; g_txt.ky = 1;
+    g_dirty = 1;
+}
+int ingame_text_result(char* out, size_t n) {                   /* -2 still typing, 0 cancelled, 1 done */
+    if (g_txt.on) return -2;
+    if (out && n) snprintf(out, n, "%s", g_txt.buf);
+    return g_txt.result;
+}
+void ingame_text_input(const char* utf8) {                      /* typed on a keyboard (SDL_TEXTINPUT) */
+    if (!g_txt.on || !utf8) return;
+    size_t l = strlen(g_txt.buf), a = strlen(utf8);
+    if ((int)(l + a) > g_txt.max) return;
+    memcpy(g_txt.buf + l, utf8, a + 1); g_dirty = 1;
+}
+static void txt_del(void) {                                     /* the last letter (a whole UTF-8 one) */
+    size_t l = strlen(g_txt.buf);
+    while (l > 0) { l--; if (((unsigned char)g_txt.buf[l] & 0xC0) != 0x80) break; }
+    g_txt.buf[l] = 0; g_dirty = 1;
+}
+static void txt_press(void) {                                   /* the chosen key of the screen's keyboard */
+    if (g_txt.ky < 4) { char c[2] = { OSK[g_txt.shift][g_txt.ky][g_txt.kx], 0 }; ingame_text_input(c); if (g_txt.shift == 1 && g_txt.ky > 0) g_txt.shift = 0; }
+    else if (g_txt.kx == 0) g_txt.shift = !g_txt.shift;
+    else if (g_txt.kx == 1) ingame_text_input(" ");
+    else if (g_txt.kx == 2) txt_del();
+    else { g_txt.result = 1; g_txt.on = 0; }
+    g_dirty = 1;
+}
+static void txt_move(int dx, int dy) {
+    if (dy) { g_txt.ky = (g_txt.ky + dy + 5) % 5; if (g_txt.ky == 4 && g_txt.kx > 3) g_txt.kx = 3; }
+    if (dx) { int w = g_txt.ky == 4 ? 4 : 10; g_txt.kx = (g_txt.kx + dx + w) % w; }
+    g_dirty = 1;
+}
+
+static int pages_open(void) { return g_lst.on || g_txt.on; }
 static int on_value(void) { return g_open && g_nrows && g_rows[g_sel[g_depth]].value; }
 int ingame_menu_key(SDL_Scancode k, int* action) {
+    if (!g_dlg.on && g_txt.on) {                                     /* typing: the keyboard types (SDL_TEXTINPUT), these edit */
+        if (k == SDL_SCANCODE_BACKSPACE) txt_del();
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) { g_txt.result = 1; g_txt.on = 0; g_dirty = 1; }
+        else if (k == SDL_SCANCODE_ESCAPE) { g_txt.result = 0; g_txt.on = 0; g_dirty = 1; }
+        return 1;
+    }
+    if (!g_dlg.on && g_lst.on) {
+        int isA = g_ctl_key[CA_A][0] && (int)k == (g_ctl_key[CA_A][0] & 0xFFFF), isB = g_ctl_key[CA_B][0] && (int)k == (g_ctl_key[CA_B][0] & 0xFFFF);
+        if (k == SDL_SCANCODE_UP) lst_move(-1); else if (k == SDL_SCANCODE_DOWN) lst_move(1);
+        else if (k == SDL_SCANCODE_PAGEUP) lst_move(-8); else if (k == SDL_SCANCODE_PAGEDOWN) lst_move(8);
+        else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER || k == SDL_SCANCODE_SPACE || k == SDL_SCANCODE_RIGHT || isA) { if (g_lst.n) lst_done(g_lst.sel); }
+        else if (k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_BACKSPACE || k == SDL_SCANCODE_LEFT || isB) lst_done(-1);
+        return 1;
+    }
     if (g_dlg.on) {
         int isA = g_ctl_key[CA_A][0] && (int)k == (g_ctl_key[CA_A][0] & 0xFFFF), isB = g_ctl_key[CA_B][0] && (int)k == (g_ctl_key[CA_B][0] & 0xFFFF);
         if (k == SDL_SCANCODE_LEFT) dlg_key('L'); else if (k == SDL_SCANCODE_RIGHT || k == SDL_SCANCODE_TAB) dlg_key('R');
@@ -203,6 +302,33 @@ void ingame_menu_pad(SDL_GameController* p, int* action, uint32_t now_ms) {
     static int was_r = 1, was_l = 1;
     int x = SDL_GameControllerGetAxis(p, SDL_CONTROLLER_AXIS_LEFTX);
     int xdir = left || x < -20000 ? -1 : right || x > 20000 ? 1 : 0;
+    if (!g_dlg.on && (g_txt.on || g_lst.on)) {                        /* typing or a list: the stick and D-pad move, repeating */
+        int sx = xdir, sy = dir;
+        static int hx, hy; static uint32_t nx, ny;
+        int mx = 0, my = 0;
+        if (sx != hx) { hx = sx; if (sx) { mx = sx; nx = now_ms + 380; } } else if (sx && (int32_t)(now_ms - nx) >= 0) { mx = sx; nx = now_ms + 110; }
+        if (sy != hy) { hy = sy; if (sy) { my = sy; ny = now_ms + 380; } } else if (sy && (int32_t)(now_ms - ny) >= 0) { my = sy; ny = now_ms + 90; }
+        int st = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_START), yb = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_Y),
+            xb = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_X);
+        static int was_st = 1, was_yb = 1, was_xb = 1;
+        if (g_txt.on) {
+            if (mx || my) txt_move(mx, my);
+            if (a && !was_a) txt_press();
+            else if (b && !was_b) txt_del();                         /* B: delete a letter */
+            else if (st && !was_st) { g_txt.result = 1; g_txt.on = 0; g_dirty = 1; }   /* Start: done */
+            else if (yb && !was_yb) { g_txt.shift = !g_txt.shift; g_dirty = 1; }      /* (top button) capitals */
+            else if (xb && !was_xb) ingame_text_input(" ");          /* (left button) a space */
+            else if (m && !was_menu) { g_txt.result = 0; g_txt.on = 0; g_dirty = 1; }  /* Home: cancel */
+        } else {
+            if (my) lst_move(my);
+            if (mx) lst_move(mx * 8);
+            if (a && !was_a && g_lst.n) lst_done(g_lst.sel);
+            else if (b && !was_b) lst_done(-1);
+        }
+        was_a = a; was_b = b; was_menu = m; was_r = right; was_l = left; was_st = st; was_yb = yb; was_xb = xb;
+        held_dir = dir; held_x = xdir;
+        return;
+    }
     if (g_dlg.on) {                                                  /* a message: left / right between its buttons */
         if (dir != held_dir) { held_dir = dir; if (dir) dlg_key(dir < 0 ? 'U' : 'D'); }
         if (xdir != held_x) { held_x = xdir; if (xdir) dlg_key(xdir < 0 ? 'L' : 'R'); }
@@ -230,6 +356,31 @@ void ingame_menu_pad(SDL_GameController* p, int* action, uint32_t now_ms) {
 /* the mouse (window pixels): pointing chooses the row, a click picks it, the right button goes back */
 static int in_rect(const int* r, int x, int y) { return r[2] > 0 && x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]; }
 int ingame_menu_mouse(const SDL_Event* e, int* action) {
+    if (!g_dlg.on && (g_txt.on || g_lst.on)) {
+        if (e->type == SDL_MOUSEWHEEL) { if (g_lst.on) lst_move(e->wheel.y > 0 ? -3 : 3); return 1; }
+        int x = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, y = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
+        int click = e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT;
+        if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_RIGHT) {
+            if (g_txt.on) { g_txt.result = 0; g_txt.on = 0; } else lst_done(-1);
+            g_dirty = 1; return 1;
+        }
+        if (g_txt.on) {
+            for (int ky = 0; ky < 5; ky++) for (int kx = 0; kx < 10; kx++) if (in_rect(g_txt.key_rect[ky][kx], x, y)) {
+                if (g_txt.kx != kx || g_txt.ky != ky) { g_txt.kx = kx; g_txt.ky = ky; g_dirty = 1; }
+                if (click) txt_press();
+                return 1;
+            }
+        } else {
+            for (int i = 0; i < 40; i++) if (g_lst.rows[i][1] > g_lst.rows[i][0] && y >= g_lst.rows[i][0] && y < g_lst.rows[i][1] &&
+                                             x >= g_panel[0] && x < g_panel[0] + g_panel[2]) {
+                int r = g_lst.top + i;
+                if (r < g_lst.n && g_lst.sel != r) { g_lst.sel = r; g_dirty = 1; }
+                if (click && r < g_lst.n) lst_done(r);
+                return 1;
+            }
+        }
+        return 1;
+    }
     if (g_dlg.on) {
         if (e->type == SDL_MOUSEWHEEL) return 1;
         int x = e->type == SDL_MOUSEMOTION ? e->motion.x : e->button.x, y = e->type == SDL_MOUSEMOTION ? e->motion.y : e->button.y;
@@ -322,7 +473,7 @@ static int text_lines(int x, int y, int max_w, float px, uint32_t c, const char*
 /* The menu's layer for a window of w x h pixels: RGBA, rows top-down; NULL
  * when nothing changed since the last call (*w and *h stay as given). */
 const uint8_t* ingame_menu_draw(int w, int h, int force) {
-    if (!(g_open || g_dlg.on) || w <= 0 || h <= 0) return NULL;
+    if (!ingame_menu_is_open() || w <= 0 || h <= 0) return NULL;
     if (!force && !g_dirty && w == g_w && h == g_h && g_gen_drawn == menu_generation()) return NULL;
     if (w != g_w || h != g_h || !g_rgb) {
         free(g_rgb); free(g_alpha); free(g_out);
@@ -333,6 +484,96 @@ const uint8_t* ingame_menu_draw(int w, int h, int force) {
     g_dirty = 0; g_gen_drawn = menu_generation();
     memset(g_rgb, 0, (size_t)w * h * 4);
     memset(g_alpha, 110, (size_t)w * h);                               /* the game, dimmed behind it */
+    if (!g_dlg.on && g_txt.on) {                                        /* typing */
+        const uint32_t BG = 0x101A3A, SEL = 0x2F4C8C, WHITE = 0xFFFFFF, GREY = 0x8A93AE, GOLD = 0xF8D860;
+        float px = h * 0.032f; if (px < 14) px = 14; if (px > 36) px = 36;
+        int pw = (int)(px * 30); if (pw > w - 2 * (int)px) pw = w - 2 * (int)px;
+        int pad = (int)(px * 1.1f), line = px > 24 ? 3 : 2, head = (int)(px * 2.1f);
+        float tp = px * 0.85f;
+        int th = text_lines(0, 0, pw - 2 * pad, tp, 0, g_txt.prompt, 0);
+        int kh = (int)(px * 1.9f), kgap = (int)(px * 0.25f), field = (int)(px * 2.2f);
+        int ph = head + pad + th + pad + field + pad + 5 * (kh + kgap) + (int)(px * 1.6f) + pad;
+        if (ph > h - 8) { tp = px * 0.7f; th = text_lines(0, 0, pw - 2 * pad, tp, 0, g_txt.prompt, 0); ph = head + pad + th + pad + field + pad + 5 * (kh + kgap) + (int)(px * 1.6f) + pad; }
+        int x0 = (w - pw) / 2, y0 = (h - ph) / 2; if (y0 < 4) y0 = 4;
+        g_panel[0] = x0; g_panel[1] = y0; g_panel[2] = pw; g_panel[3] = ph;
+        fill(x0, y0, pw, ph, BG, 245);
+        frame(x0 + line, y0 + line, pw - 2 * line, ph - 2 * line, line, WHITE);
+        text_fit(x0 + pad, y0 + (head - (int)px) / 2, pw - 2 * pad, px * 1.05f, GOLD, g_txt.title);
+        fill(x0 + pad, y0 + head - line, pw - 2 * pad, line, 0x3A4670, 255);
+        int y = y0 + head + pad;
+        text_lines(x0 + pad, y, pw - 2 * pad, tp, 0xC8D0E8, g_txt.prompt, 1); y += th + pad;
+        fill(x0 + pad, y, pw - 2 * pad, field, 0x060C22, 255); frame(x0 + pad, y, pw - 2 * pad, field, 1, GREY);
+        {   /* the text, its end showing when long, and the caret */
+            const char* t = g_txt.buf; int mw = pw - 2 * pad - (int)(px * 1.5f);
+            while (*t && text_width(px, t) > mw) { t++; while (((unsigned char)*t & 0xC0) == 0x80) t++; }
+            int tw = text_draw(g_rgb, g_w, g_h, x0 + pad + (int)(px * 0.5f), y + (field - (int)px) / 2, px, WHITE, t);
+            fill(x0 + pad + (int)(px * 0.5f) + tw + 2, y + (int)(px * 0.4f), 2, field - (int)(px * 0.8f), GOLD, 255);
+        }
+        y += field + pad;
+        int kw = (pw - 2 * pad - 9 * kgap) / 10;
+        memset(g_txt.key_rect, 0, sizeof g_txt.key_rect);
+        for (int ky = 0; ky < 5; ky++, y += kh + kgap) {
+            int cols = ky == 4 ? 4 : 10;
+            for (int kx = 0; kx < cols; kx++) {
+                int bw = ky == 4 ? (pw - 2 * pad - 3 * kgap) / 4 : kw, bx = x0 + pad + kx * (bw + kgap);
+                int on = g_txt.kx == kx && g_txt.ky == ky;
+                fill(bx, y, bw, kh, on ? SEL : 0x1C2850, 255);
+                frame(bx, y, bw, kh, 1, on ? WHITE : 0x3A4670);
+                char lab[16];
+                if (ky < 4) { lab[0] = OSK[g_txt.shift][ky][kx]; lab[1] = 0; }
+                else snprintf(lab, sizeof lab, "%s", kx == 0 ? (g_txt.shift ? "abc" : "ABC") : kx == 1 ? "Space" : kx == 2 ? "Delete" : "Done");
+                int lw = text_width(px, lab);
+                text_draw(g_rgb, g_w, g_h, bx + (bw - lw) / 2, y + (kh - (int)px) / 2, px, ky == 4 && kx == 3 ? GOLD : WHITE, lab);
+                g_txt.key_rect[ky][kx][0] = bx; g_txt.key_rect[ky][kx][1] = y; g_txt.key_rect[ky][kx][2] = bw; g_txt.key_rect[ky][kx][3] = kh;
+            }
+        }
+        text_fit(x0 + pad, y + (int)(px * 0.2f), pw - 2 * pad, px * 0.75f, GREY,
+                 "Type, or: A a letter, B delete, X space, Y capitals, Start done.   Enter: done   Esc: cancel");
+        for (int j = y0; j < y0 + ph && j < h; j++) for (int i = x0; i < x0 + pw && i < w; i++) if (j >= 0 && i >= 0) g_alpha[j * w + i] = 245;
+        goto out;
+    }
+    if (!g_dlg.on && g_lst.on) {                                        /* a list */
+        const uint32_t BG = 0x101A3A, SEL = 0x2F4C8C, WHITE = 0xFFFFFF, GREY = 0x8A93AE, GOLD = 0xF8D860;
+        float px = h * 0.032f; if (px < 14) px = 14; if (px > 38) px = 38;
+        int row_h = (int)(px * 1.5f), pad = (int)(px * 1.1f), line = px > 24 ? 3 : 2;
+        int pw = (int)(px * 34); if (pw > w - 2 * (int)px) pw = w - 2 * (int)px;
+        int head = (int)(px * 2.1f), foot = (int)(px * 1.9f);
+        int max_rows = (h - 2 * (int)px - head - foot - pad) / row_h; if (max_rows < 3) max_rows = 3; if (max_rows > 40) max_rows = 40;
+        int shown = g_lst.n < max_rows ? g_lst.n : max_rows; if (shown < 1) shown = 1;
+        int ph = head + foot + shown * row_h + pad;
+        int x0 = (w - pw) / 2, y0 = (h - ph) / 2;
+        g_panel[0] = x0; g_panel[1] = y0; g_panel[2] = pw; g_panel[3] = ph;
+        fill(x0, y0, pw, ph, BG, 240);
+        frame(x0 + line, y0 + line, pw - 2 * line, ph - 2 * line, line, WHITE);
+        text_fit(x0 + pad, y0 + (head - (int)px) / 2, pw - 2 * pad, px * 1.05f, GOLD, g_lst.title);
+        fill(x0 + pad, y0 + head - line, pw - 2 * pad, line, 0x3A4670, 255);
+        if (g_lst.sel < g_lst.top) g_lst.top = g_lst.sel;
+        if (g_lst.sel >= g_lst.top + shown) g_lst.top = g_lst.sel - shown + 1;
+        if (g_lst.top > g_lst.n - shown) g_lst.top = g_lst.n - shown;
+        if (g_lst.top < 0) g_lst.top = 0;
+        memset(g_lst.rows, 0, sizeof g_lst.rows);
+        int ry = y0 + head + pad / 2;
+        if (!g_lst.n) text_draw(g_rgb, g_w, g_h, x0 + pad, ry + (row_h - (int)px) / 2, px, GREY, "(nothing here)");
+        for (int k = 0; k < shown && g_lst.top + k < g_lst.n; k++, ry += row_h) {
+            int i = g_lst.top + k, on = i == g_lst.sel;
+            g_lst.rows[k][0] = ry; g_lst.rows[k][1] = ry + row_h;
+            if (on) fill(x0 + line * 3, ry, pw - line * 6, row_h, SEL, 255);
+            int ty = ry + (row_h - (int)px) / 2, right = x0 + pw - pad;
+            if (on) tri_right(x0 + pad - (int)(px * 0.7f), ty + (int)(px * 0.2f), (int)(px * 0.6f), WHITE);
+            if (g_lst.right[i][0]) {
+                int rw = text_width(px * 0.85f, g_lst.right[i]); if (rw > pw / 2) rw = pw / 2;
+                text_fit(right - rw, ty + (int)(px * 0.08f), rw, px * 0.85f, on ? GOLD : GREY, g_lst.right[i]);
+                right -= rw + (int)px;
+            }
+            text_fit(x0 + pad, ty, right - x0 - pad, px, WHITE, g_lst.text[i]);
+        }
+        if (g_lst.top > 0) fill(x0 + pw - pad, y0 + head + pad / 4, (int)(px * 0.4f), line, GREY, 255);
+        if (g_lst.top + shown < g_lst.n) fill(x0 + pw - pad, y0 + ph - foot - line, (int)(px * 0.4f), line, GREY, 255);
+        fill(x0 + pad, y0 + ph - foot, pw - 2 * pad, line, 0x3A4670, 255);
+        text_fit(x0 + pad, y0 + ph - foot + (foot - (int)(px * 0.8f)) / 2, pw - 2 * pad, px * 0.8f, GREY, g_lst.foot);
+        for (int j = y0; j < y0 + ph && j < h; j++) for (int i = x0; i < x0 + pw && i < w; i++) if (j >= 0 && i >= 0) g_alpha[j * w + i] = 245;
+        goto out;
+    }
     if (g_dlg.on) {                                                     /* a message or question */
         const uint32_t BG = 0x101A3A, SEL = 0x2F4C8C, WHITE = 0xFFFFFF, GREY = 0x8A93AE, GOLD = 0xF8D860;
         float px = h * 0.032f; if (px < 14) px = 14; if (px > 38) px = 38;
