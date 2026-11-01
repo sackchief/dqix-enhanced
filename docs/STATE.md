@@ -270,6 +270,12 @@ The ones before: `v32`, `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `g
   30 ms coalescing, keepalive 25 s), relay_url.h. Host window by reach
   (direct / code / home only). connect_within 10 s; home_address warning.
   Tested with a Node stand-in for the Workers runtime.
+- **v34-nightly1** (2026-11-01): the in-game menu (menu_items.c: every
+  option once, the Windows bar built from it; menu_ingame.c: the list,
+  messages, value rows, lists, typing with an on-screen keyboard;
+  gl_set_overlay). Esc / Home / Select+Start open it. Controls, save
+  import / export, typing and the session lobby inside the game.
+  Tests: DQIX_MENU_TEST=frame:keys (menuNN / dialogNN / listNN / textNN.ppm).
 - **v33 stable** (2026-10-31): fixes from v32's reports, straight to
   stable. Battle HUD: panels found by their lines on the left (submenus
   cross them on the right; then one piece), kept in the party's order, a

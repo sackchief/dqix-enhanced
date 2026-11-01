@@ -1,7 +1,7 @@
 **The newest work, less tested.** Use the stable release for your main
 adventure; try this one in its own folder with a copy of your save.
 
-**What's new since v33**
+**New in v34-nightly1** (since stable v33)
 
 - **An in-game menu** (first version): **Esc**, or the controller's
   **Home / Guide** button, or **Select + Start** together. Every option of
