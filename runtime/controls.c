@@ -40,6 +40,7 @@ const ControlAction g_ctl[CA_N] = {
     [CA_REPORT] = { "bug_report", "Bug report", -1 },
     [CA_HDTEXT] = { "hd_text", "HD text", -1 },
     [CA_COMPARE] = { "compare_textures", "Mods: the game's own textures (hold)", -1 },
+    [CA_MENU] = { "menu", "The in-game menu (also Esc)", -1 },
 };
 
 int g_ctl_key[CA_N][2];
@@ -67,6 +68,7 @@ void controls_defaults(void) {
     g_ctl_pad[CA_X] = SDL_CONTROLLER_BUTTON_Y; g_ctl_pad[CA_Y] = SDL_CONTROLLER_BUTTON_X;
     g_ctl_pad[CA_L] = SDL_CONTROLLER_BUTTON_LEFTSHOULDER; g_ctl_pad[CA_R] = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
     g_ctl_pad[CA_START] = SDL_CONTROLLER_BUTTON_START; g_ctl_pad[CA_SELECT] = SDL_CONTROLLER_BUTTON_BACK;
+    g_ctl_pad[CA_MENU] = SDL_CONTROLLER_BUTTON_GUIDE;                 /* (Home / Guide; or Select + Start together) */
     g_ctl_pad[CA_UP] = SDL_CONTROLLER_BUTTON_DPAD_UP; g_ctl_pad[CA_DOWN] = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
     g_ctl_pad[CA_LEFT] = SDL_CONTROLLER_BUTTON_DPAD_LEFT; g_ctl_pad[CA_RIGHT] = SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
     g_ctl_pad[CA_SINGLE] = CTL_PAD_LT; g_ctl_pad[CA_SWAP] = CTL_PAD_RT;

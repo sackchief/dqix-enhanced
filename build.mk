@@ -12,12 +12,12 @@ FRONTEND ?= none
 OUT ?= dqix
 
 RT = $(wildcard runtime/*.c)
-RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) runtime/frontend_$(FRONTEND).c
+RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) runtime/frontend_$(FRONTEND).c
 
 ifeq ($(FRONTEND),sdl)
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS ?= $(shell sdl2-config --libs)
-RT += runtime/gl_render.c runtime/menu_win32.c runtime/controls.c runtime/discord.c
+RT += runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c
 endif
 
 # libslirp (user-mode network stack for the wireless emulation, BSD licence)
@@ -42,7 +42,7 @@ $(OUT): $(GENOBJ) $(GEN7OBJ) $(RTOBJ) $(SLIRPOBJ) $(OBJ)/rt/exe_main.o $(RES)
 # The game as a library (CORE=dqixcore.dll / dqixcore.so): in a session the
 # other players' DSes run from copies of it on one thread (hosting.c). Same
 # objects, without the window; on Linux everything needs PIC=-fPIC.
-CORE_RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter-out runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/controls.c runtime/discord.c,$(RT)) runtime/frontend_none.c)
+CORE_RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter-out runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c,$(RT)) runtime/frontend_none.c)
 ifeq ($(OS),Windows_NT)
 CORE_LDFLAGS ?= -static-libgcc
 else
@@ -84,7 +84,15 @@ $(OBJ)/rt/menu_win32.o: runtime/menu_win32.c runtime/menu.h runtime/controls.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
-$(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
+$(OBJ)/rt/menu_items.o: runtime/menu_items.c runtime/menu.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+
+$(OBJ)/rt/menu_ingame.o: runtime/menu_ingame.c runtime/menu_ingame.h runtime/menu.h runtime/text.h runtime/controls.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+
+$(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/menu_ingame.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 

@@ -378,6 +378,12 @@ static const char* FS_COMP =
     "}\n";
 
 /* Fast forward's sign: three arrows (in a quad, v_uv 0..1), white with a dark rim */
+/* The in-game menu's layer, as it is (straight alpha). */
+static const char* FS_OVL =
+    "#version 330 core\n"
+    "in vec2 v_uv; out vec4 o_color; uniform sampler2D u_src;\n"
+    "void main() { o_color = texture(u_src, v_uv); }\n";
+
 static const char* FS_FF =
     "#version 330 core\n"
     "in vec2 v_uv; out vec4 o_color;\n"
@@ -661,7 +667,8 @@ static GLuint program(const char* vs, const char* fs, int poly) {
 /* ---------------------------------------------------------------- state */
 static int g_scale = 2;
 static GLuint tex_move, tex_layer;
-static GLuint prog_poly, prog_post, prog_comp, prog_copy, prog_piece, prog_screen, prog_ghost, prog_ff;
+static GLuint prog_poly, prog_post, prog_comp, prog_copy, prog_piece, prog_screen, prog_ghost, prog_ff, prog_ovl;
+static GLuint ovl_tex; static int ovl_w, ovl_h;                 /* the in-game menu (gl_set_overlay) */
 static GLuint ghost_tex[2], ghost_fbo[2]; static int ghost_cur = -1, ghost_w, ghost_h;
 static GLuint skin_tex; static int skin_w, skin_h;          /* console photo (View > Console colour) */
 static GLuint vao_poly, vbo_poly, vao_quad, vbo_quad;
@@ -1103,6 +1110,7 @@ int gl_render_init(int scale) {
     prog_screen = program(VS_QUAD, FS_SCREEN, 0);
     prog_ghost = program(VS_QUAD, FS_GHOST, 0);
     prog_ff = program(VS_QUAD, FS_FF, 0);
+    prog_ovl = program(VS_QUAD, FS_OVL, 0);
     if (!prog_poly || !prog_post || !prog_comp || !prog_copy || !prog_screen || !prog_ghost) return 0;
     p_glGenVertexArrays(1, &vao_poly); p_glBindVertexArray(vao_poly);
     p_glGenBuffers(1, &vbo_poly); p_glBindBuffer(GL_ARRAY_BUFFER, vbo_poly);
@@ -1642,8 +1650,9 @@ static int ui_classify(void) {
             if (wide) { top = ry; if (bot < 0) bot = ry; }
             else if (bot >= 0) break;
         }
-        int above = 0; if (top > 0) for (int cx = 0; cx < 32; cx++) above += gcell[g][top - 1][cx];
-        if (bot >= 0 && top >= 12 && bot - top >= 2 && above < 10) bands[g] = top;   /* (a big window reaching higher, or sitting on it, is no dialogue box) */
+        int above = 0, run = 0;                                          /* the widest window in the row above (a name tag and a Yes/No: small ones) */
+        if (top > 0) for (int cx = 0; cx < 32; cx++) { run = gcell[g][top - 1][cx] ? run + 1 : 0; if (run > above) above = run; }
+        if (bot >= 0 && top >= 12 && bot - top >= 2 && above <= 12) bands[g] = top;   /* (a big window reaching higher, or sitting on it, is no dialogue box) */
     }
     int band_any = bands[0] < bands[1] ? bands[0] : bands[1];
     int tags[16][5], ntag = 0;                                           /* the dialogue box's small windows (for after) */
@@ -1999,6 +2008,30 @@ void gl_present(const GlPresent* v) {
         p_glDrawArrays(GL_TRIANGLES, 0, 6);
         p_glDisable(GL_BLEND);
     }
+    if (v->overlay && ovl_tex && prog_ovl && ovl_w == v->win_w && ovl_h == v->win_h) {   /* the in-game menu */
+        p_glEnable(GL_BLEND); p_glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD); p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+        p_glUseProgram(prog_ovl);
+        p_glActiveTexture(GL_TEXTURE0); p_glBindTexture(GL_TEXTURE_2D, ovl_tex); p_glBindSampler(0, 0);
+        p_glUniform1i(p_glGetUniformLocation(prog_ovl, "u_src"), 0);
+        p_glUniform4f(p_glGetUniformLocation(prog_ovl, "u_rect"), -1, -1, 2, 2);
+        p_glUniform4f(p_glGetUniformLocation(prog_ovl, "u_uv"), 0, 1, 1, -1);   /* (rows top-down) */
+        p_glBindVertexArray(vao_quad);
+        p_glDrawArrays(GL_TRIANGLES, 0, 6);
+        p_glDisable(GL_BLEND);
+    }
+}
+
+void gl_set_overlay(const uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) { ovl_w = ovl_h = 0; return; }
+    if (!ovl_tex) p_glGenTextures(1, &ovl_tex);
+    p_glBindTexture(GL_TEXTURE_2D, ovl_tex);
+    p_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    ovl_w = w; ovl_h = h;
 }
 
 /* A console photo (RGBA, rows top-down), drawn around the screens. */

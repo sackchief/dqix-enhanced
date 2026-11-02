@@ -31,163 +31,22 @@ void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) {
     g_hwnd = info.info.win.window;
     g_bar = CreateMenu();
 
-    HMENU game = sub(g_bar, L"&Game");
-    item(game, MI_PAUSE, L"&Pause\tP");
-    item(game, MI_TURBO, L"&Fast forward\tTab");
-    item(game, MI_RESET, L"&Reset...\tCtrl+R");
-    sep(game);
-    item(game, MI_VOLUME, L"&Volume...\t- / =");
-    item(game, MI_MUTE, L"&Mute");
-    item(game, MI_CONTROLS_EDIT, L"&Controls...");
-    HMENU lang = sub(game, L"&Language (European version)");      /* (here, not on the bar: a wider bar wraps in a small window) */
-    item(lang, MI_LANG1, L"&English");
-    item(lang, MI_LANG1 + 1, L"&Fran\u00e7ais");
-    item(lang, MI_LANG1 + 2, L"&Deutsch");
-    item(lang, MI_LANG1 + 3, L"&Italiano");
-    item(lang, MI_LANG1 + 4, L"E&spa\u00f1ol");
-    sep(game);
-    HMENU sf = sub(game, L"Save &file");
-    item(sf, MI_SAVE_EXPORT, L"&Export your save (a copy)...");
-    item(sf, MI_SAVE_IMPORT, L"&Import a save (from another copy or an emulator)...");
-    sep(game);
-    item(game, MI_SHOT, L"Save &screenshot\tF12");
-    item(game, MI_REPORT, L"Save &bug report\tF10");
-    sep(game);
-    item(game, MI_EXIT, L"E&xit\tEsc");
-
-    HMENU gfx = sub(g_bar, L"G&raphics");
-    item(gfx, MI_CLASSIC, L"&Classic: exactly like the DS\tF5");
-    item(gfx, MI_ENHANCED, L"&Enhanced: sharper 3D\tF5");
-    sep(gfx);
-    HMENU res = sub(gfx, L"3D &resolution (Enhanced)\tF4");
-    item(res, MI_RES1, L"1x (DS)");
-    item(res, MI_RES2, L"2x");
-    item(res, MI_RES3, L"3x");
-    item(res, MI_RES4, L"4x");
-    item(res, MI_RES6, L"6x");
-    item(res, MI_RES8, L"8x");
-    sep(res);
-    item(res, MI_RES_AUTO, L"&Auto: as sharp as your screen (up to 12x)");
-    item(gfx, MI_SMOOTH, L"&Smooth textures (Enhanced)");
-    HMENU ol = sub(gfx, L"Character &outlines (Enhanced)");
-    item(ol, MI_OUTLINE0, L"&Thin (clean, like emulators at a high resolution)");
-    item(ol, MI_OUTLINE0 + 1, L"&Medium");
-    item(ol, MI_OUTLINE0 + 2, L"Like the &DS (thicker, follows the polygons)");
-    item(gfx, MI_HD_TEXT, L"&HD text: the letters at full resolution (Enhanced, new)\tF1");
-    item(gfx, MI_SOFT_SHADOWS, L"Soft s&hadows and glows (Enhanced)");
-
-    HMENU scr = sub(g_bar, L"&Screen");
-    item(scr, MI_LCD, L"&DS Lite screen\tF6");
-    sep(scr);
-    item(scr, MI_LCDCOL, L"LCD &colours");
-    item(scr, MI_GRID, L"&Pixel grid (at 3x and larger)");
-    item(scr, MI_GHOST, L"&Motion blur");
-    HMENU bl = sub(scr, L"&Backlight");
-    item(bl, MI_BL1, L"&Low");
-    item(bl, MI_BL2, L"&Medium");
-    item(bl, MI_BL3, L"&High");
-    item(bl, MI_BL4, L"Ma&x");
-
-    HMENU view = sub(g_bar, L"&View");
-    item(view, MI_SHELL, L"Show the DS &Lite\tF7");
-    HMENU col = sub(view, L"Console &colour");
-    for (int i = 0; i < n_shells; i++) {
-        wchar_t w[64];
-        MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64);
-        item(col, MI_SHELLC0 + i, w);
+    /* from the list of every option (menu_items.c) */
+    HMENU stack[8]; int depth = 0; stack[0] = g_bar;
+    for (const MenuItem* it = g_menu_items; it->kind != MK_STOP; it++) {
+        wchar_t w[300];
+        if (it->kind == MK_END) { if (depth > 0) depth--; continue; }
+        if (it->kind == MK_SEP) { sep(stack[depth]); continue; }
+        if (it->kind == MK_SHELLS) {
+            for (int i = 0; i < n_shells; i++) { MultiByteToWideChar(CP_UTF8, 0, shell_names[i], -1, w, 64); item(stack[depth], MI_SHELLC0 + i, w); }
+            continue;
+        }
+        char t[300];
+        snprintf(t, sizeof t, it->key ? "%s\t%s" : "%s", it->label, it->key);
+        MultiByteToWideChar(CP_UTF8, 0, t, -1, w, 300);
+        if (it->kind == MK_SUB) { HMENU m = sub(stack[depth], w); if (depth < 7) stack[++depth] = m; }
+        else item(stack[depth], it->id, w);
     }
-    item(view, MI_GAP, L"&Gap between the screens");
-    item(view, MI_ACTUAL, L"&Actual size (as big as a real DS Lite)\tF8");
-    sep(view);
-    item(view, MI_STACKED, L"S&tacked\tF2");
-    item(view, MI_SIDE, L"&Side by side\tF2");
-    item(view, MI_CORNER, L"Top screen in the &corner\tF2");
-    item(view, MI_WIDE, L"&Basic Widescreen (the action wide, the other screen in a corner)\tF2");
-    item(view, MI_WIDE_DYN, L"D&ynamic Widescreen (Experimental): the map stays in the corner, the game's windows move right\tF2");
-    item(view, MI_TWO, L"Two wi&ndows (one screen in each, for two monitors)\tF2");
-    sep(view);
-    item(view, MI_SINGLE, L"Single scr&een (widescreen: hide the small screen)\tU");
-    item(view, MI_SWAP, L"Swa&p the screens (widescreen: hold to see the other)\tF9");
-    HMENU sm = sub(view, L"Widescreen: the small scr&een");
-    item(sm, MI_CORNER0, L"Top left\tK");
-    item(sm, MI_CORNER0 + 1, L"Top right\tK");
-    item(sm, MI_CORNER0 + 2, L"Bottom right\tK");
-    item(sm, MI_CORNER0 + 3, L"Bottom left\tK");
-    sep(sm);
-    item(sm, MI_SSIZE0, L"Small\tI");
-    item(sm, MI_SSIZE0 + 1, L"Medium\tI");
-    item(sm, MI_SSIZE0 + 2, L"Large\tI");
-    sep(sm);
-    item(sm, MI_OPACITY1, L"100% (solid)\tO");
-    item(sm, MI_OPACITY1 + 1, L"75%\tO");
-    item(sm, MI_OPACITY1 + 2, L"50%\tO");
-    item(sm, MI_OPACITY1 + 3, L"25%\tO");
-    sep(sm);
-    item(sm, MI_POPOUT, L"In its own &window (a clean field)");
-    sep(view);
-    HMENU size = sub(view, L"&Window size\tF3");
-    item(size, MI_SIZE1, L"1x");
-    item(size, MI_SIZE2, L"2x");
-    item(size, MI_SIZE3, L"3x");
-    item(size, MI_SIZE4, L"4x");
-    item(view, MI_INTEGER, L"&Integer scaling");
-    item(view, MI_FULL, L"&Fullscreen\tF11");
-
-    HMENU wl = sub(g_bar, L"&Wireless");
-    item(wl, MI_NET, L"&Connect (Nintendo Wi-Fi Connection replacement)");
-    HMENU srv = sub(wl, L"&Server");
-    item(srv, MI_SRV_BUILTIN, L"&Built-in (offline: DQIX's preserved downloads)");
-    sep(srv);
-    item(srv, MI_SRV_ALTWFC, L"&AltWFC (172.104.88.237)");
-    item(srv, MI_SRV_WIIMMFI, L"&Wiimmfi (164.132.44.106): not for DQIX");
-    item(srv, MI_SRV_CUSTOM, L"&Custom (wfc_server in settings.ini)");
-    sep(wl);
-    HMENU friends = sub(wl, L"&Play with friends far away (tag mode, visiting)");
-    item(friends, MI_SES_HOST, L"&Host: your friends join you...");
-    item(friends, MI_SES_JOIN, L"&Join a friend...");
-    item(friends, MI_SES_START, L"&Start now (everyone is here)\tEnter");
-    item(friends, MI_SES_LEAVE, L"&Leave and play alone");
-    sep(friends);
-    item(friends, MI_SES_NAME, L"Your &name...");
-    item(friends, MI_SES_HELP, L"&How does this work?");
-    sep(wl);
-    item(wl, MI_DLC, L"&Unlock all downloadable content now (without Sellma)");
-    sep(wl);
-    item(wl, MI_NET_HELP, L"&How does this work?");
-
-    HMENU modern = sub(g_bar, L"&Modern");
-    item(modern, MI_ANALOG, L"Walk in any &direction with the left stick");
-    item(modern, MI_WIDE, L"&Basic Widescreen: the action wide, the other screen in a corner");
-    item(modern, MI_WIDE_DYN, L"D&ynamic Widescreen (Experimental)");
-    item(modern, MI_CORNER, L"Top screen in the &corner (the field as on the DS)");
-    item(modern, MI_POPOUT, L"Widescreen: the small screen in its own &window (a clean field)");
-    item(modern, MI_SCENE_BARS, L"Widescreen: &black sides in this place (remembered)");
-    item(modern, MI_DISCORD, L"Show on &Discord what I'm playing");
-    item(modern, MI_HUD, L"Widescreen: battle &HUD over the 3D (experimental: the party's panels in the bottom left)");
-    sep(modern);
-    item(modern, MI_MODERN_HELP, L"&What is this?");
-    HMENU mods = sub(g_bar, L"M&ods");
-    item(mods, MI_TEXPACK, L"&Texture packs (the pictures in the textures folder)");
-    item(mods, MI_TEXUP, L"&Upscale the 3D textures (xBR: smooth slopes and curves)");
-    item(mods, MI_TEXRELOAD, L"&Reload the texture packs");
-    item(mods, MI_TEXFOLDER, L"&Open the textures folder");
-    sep(mods);
-    item(mods, MI_TEXDUMP, L"&Dump textures (to make a pack: every texture shown goes to textures\\dump)");
-    sep(mods);
-    item(mods, MI_MUSPACK, L"&Music packs (the recordings in the music folder)");
-    item(mods, MI_MUSRELOAD, L"R&eload the music");
-    item(mods, MI_MUSFOLDER, L"O&pen the music folder (and its list of the songs)");
-    item(mods, MI_MUSNAMES, L"&Show each song's name as it starts");
-    item(mods, MI_MUSEXPORT, L"E&xport the game's songs (WAV files with their loops, to music\\export: about 650 MB)");
-    sep(mods);
-    item(mods, MI_MODS_HELP, L"&What is this?");
-    HMENU help = sub(g_bar, L"&Help");
-    item(help, MI_CONTROLS, L"&Controls");
-    item(help, MI_UPDATE, L"Check for &updates...");
-    item(help, MI_UPDATE_AUTO, L"Check for updates at &start");
-    sep(help);
-    item(help, MI_SEND_REPORT, L"&Send a bug report...");
-    item(help, MI_ABOUT, L"&About");
 
     SetMenu(g_hwnd, g_bar);
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
@@ -329,11 +188,11 @@ void menu_show_second(int on) {
     if (g_hwnd2 && IsWindow(g_hwnd2)) SetMenu(g_hwnd2, on ? g_bar2 : NULL);
 }
 
-void menu_check(int id, int on) {
+void menu_check_os(int id, int on) {
     if (g_bar) CheckMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
 }
 
-void menu_enable(int id, int on) {
+void menu_enable_os(int id, int on) {
     if (g_bar) EnableMenuItem(g_bar, (UINT)id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
 }
 
@@ -887,8 +746,8 @@ int file_dialog(SDL_Window* win, int save, const char* title, const char* filter
     (void)win; (void)save; (void)title; (void)filter; (void)default_name; (void)out; (void)n; return 0; }
 void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }
-void menu_check(int id, int on) { (void)id; (void)on; }
-void menu_enable(int id, int on) { (void)id; (void)on; }
+void menu_check_os(int id, int on) { (void)id; (void)on; }
+void menu_enable_os(int id, int on) { (void)id; (void)on; }
 int menu_command(const SDL_Event* e) { (void)e; return 0; }
 int session_window_open(SDL_Window* win) { (void)win; return 0; }
 void volume_window_open(SDL_Window* win, int* volume, int* mute) { (void)win; (void)volume; (void)mute; }
