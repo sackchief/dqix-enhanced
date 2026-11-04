@@ -31,7 +31,16 @@ export default {
     if (req.headers.get("Upgrade") !== "websocket") return new Response("WebSocket only\n", { status: 426 });
     const role = url.searchParams.get("role");
     if (role !== "host" && role !== "join") return new Response("role=host or role=join\n", { status: 400 });
-    return env.ROOMS.get(env.ROOMS.idFromName(m[1])).fetch(req);
+    try {
+      return await env.ROOMS.get(env.ROOMS.idFromName(m[1])).fetch(req);
+    } catch (e) {                                   // the relay's daily allowance is used up (or Cloudflare is down)
+      const [client, server] = Object.values(new WebSocketPair());
+      server.accept();
+      server.send(say("The relay is full for today (it resets at midnight UTC). Meanwhile, join with the host's address, " +
+                      "or all use a free virtual LAN (Tailscale, ZeroTier or Radmin VPN) and the host's address there."));
+      server.close(4001, "full");
+      return new Response(null, { status: 101, webSocket: client });
+    }
   },
 };
 
