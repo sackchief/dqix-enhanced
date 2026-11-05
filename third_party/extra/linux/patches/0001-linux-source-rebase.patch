@@ -1,0 +1,701 @@
+--- a/runtime/frontend_sdl.c
++++ b/runtime/frontend_sdl.c
+@@ -44,6 +44,10 @@
+ #include "update.h"
+ #include "text.h"
+ #include "controls.h"
++#ifndef _WIN32
++#include "../../overlay/linux_overlay.h"
++#include "../../overlay/linux_overlay_gl.h"
++#endif
+ #ifdef _WIN32
+ #include <windows.h>
+ #else
+@@ -68,6 +72,8 @@
+ static int g_wide_pop;                                            /* widescreen: the small screen in its own window (the field alone) */
+ static int g_smooth = 0;                                          /* Enhanced: smooth (filtered) textures */
+ static int g_discord = 1;                                         /* Modern > Show on Discord what I'm playing (discord.c) */
++static char g_discord_app_id_override[64];
++static int g_discord_app_id_override_set;
+ static int g_tex_pack = 1, g_tex_up = 0, g_tex_dump = 0;           /* Mods (gl_render.c) */
+ static int g_mus_pack = 1, g_mus_names = 0, g_mus_vol = 70;      /* Mods: music packs (music.c) */
+ static int g_hd_text = 0;                                            /* Enhanced: the game's letters redrawn at full resolution (text_hd.h) */
+@@ -92,6 +98,9 @@
+ static int g_headless;          /* DQIX_NOWINDOW: run without a window (still uses SDL audio off) */
+ static int g_hidden;            /* another player's console in a session: no window, no sound, no pacing */
+ static int g_gl;                /* OpenGL renderer active (else SDL_Renderer + software 3D) */
++static char g_gl_fallback_reason[320], g_sdl_window_failure[320];
++static char g_sdl_renderer_accelerated_error[320], g_sdl_renderer_software_error[320], g_sdl_texture_failure[320];
++static int g_gl_swap_interval_set_result = -2, g_gl_swap_interval_actual = -2;
+ static SDL_GLContext g_glctx;
+ static int g_scale3d = 2;
+ extern void (*g_report_capture)(uint32_t out[2][256 * 192]);
+@@ -100,6 +109,12 @@
+ static int g_classic = 1;       /* Classic: the DS's own 3D renderer, exact; Enhanced: 3D on the GPU at 1-4x */
+ extern int g_comp_gl;
+ static int g_paused, g_turbo;   /* Game > Pause, Game > Fast forward (latched) */
++#ifndef _WIN32
++static int g_linux_overlay_open, g_linux_overlay_selection, g_linux_overlay_saved_paused;
++static uint8_t *g_linux_overlay_rgba;
++static SDL_Texture *g_linux_overlay_texture;
++static int g_linux_overlay_error_reported;
++#endif
+ static int g_ff_hold;           /* fast forward while Tab is held (0: Tab switches it on and off) */
+ 
+ /* How the screens are shown (View and Screen menus). The DS Lite parts need OpenGL. */
+@@ -597,7 +612,11 @@
+         else if (!strcmp(key, "music_song_names")) g_mus_names = atoi(val) != 0;
+         else if (!strcmp(key, "music_pack_volume")) { int v = atoi(val); if (v >= 0 && v <= 200) g_mus_vol = v; }
+         else if (!strcmp(key, "discord")) g_discord = atoi(val) != 0;
+-        else if (!strcmp(key, "discord_app_id")) discord_set_app_id(val);
++        else if (!strcmp(key, "discord_app_id")) {
++            snprintf(g_discord_app_id_override, sizeof g_discord_app_id_override, "%s", val);
++            g_discord_app_id_override_set = 1;
++            discord_set_app_id(val);
++        }
+         else if (!strcmp(key, "upscale_textures")) g_tex_up = atoi(val) != 0;
+         else if (!strcmp(key, "hd_text_shadows")) g_tx_shadows = atoi(val) != 0;
+         else if (!strcmp(key, "small_screen_opacity")) { int v = atoi(val); if (v >= 10 && v <= 100) opacity_saved = v; }
+@@ -659,6 +678,9 @@
+     fprintf(f, "hd_text = %d\n", g_hd_text);
+     fprintf(f, "# show on Discord what you're playing (when the Discord app is running): 0 or 1\n");
+     fprintf(f, "discord = %d\n", g_discord);
++    /* Preserve an explicit Discord application ID when runtime settings are saved. */
++    if (g_discord_app_id_override_set)
++        fprintf(f, "discord_app_id = %s\n", g_discord_app_id_override);
+     fprintf(f, "# Mods: texture packs (PNGs in the textures folder drawn instead of the game's): 0 or 1\n");
+     fprintf(f, "texture_packs = %d\n", g_tex_pack);
+     fprintf(f, "# Mods: music packs (OGG / FLAC recordings in the music folder played instead of the game's songs): 0 or 1\n");
+@@ -822,37 +844,198 @@
+ 
+ /* OpenGL: a 3.3 core context; on any failure fall back to SDL_Renderer + software 3D. */
+ static int try_gl(void) {
+-    if (getenv("DQIX_SOFTWARE")) return 0;
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+-    g_win = SDL_CreateWindow("Dragon Quest IX", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * g_scale, 384 * g_scale,
+-                             SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+-    if (!g_win) return 0;
+-    g_glctx = SDL_GL_CreateContext(g_win);
+-    if (!g_glctx) { fprintf(stderr, "OpenGL 3.3 not available (%s): using the software renderer\n", SDL_GetError()); SDL_DestroyWindow(g_win); g_win = NULL; return 0; }
+-    SDL_GL_SetSwapInterval(0);                                   /* pacing follows the audio clock */
+-    const char* e = getenv("DQIX_SCALE3D");
+-    if (e) { g_scale3d = atoi(e); g_res_auto = 0; }
+-    if (getenv("DQIX_SMOOTH")) g_smooth = atoi(getenv("DQIX_SMOOTH")) != 0;   /* tests */
+-    if (getenv("DQIX_OUTLINE")) g_gl_outline = atoi(getenv("DQIX_OUTLINE"));   /* tests: 1 thin, 2 medium, 0 DS */
+-    if (getenv("DQIX_SOFTALPHA")) g_gl_soft_alpha = atoi(getenv("DQIX_SOFTALPHA"));   /* tests */
+-    if (getenv("DQIX_SOFTSHADE")) g_gl_soft_shade = atoi(getenv("DQIX_SOFTSHADE"));   /* tests */
++    g_gl_fallback_reason[0]=g_sdl_window_failure[0]=0;
++    g_sdl_renderer_accelerated_error[0]=g_sdl_renderer_software_error[0]=g_sdl_texture_failure[0]=0;
++    g_gl_swap_interval_set_result=g_gl_swap_interval_actual=-2;
++    if(getenv("DQIX_SOFTWARE")) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"DQIX_SOFTWARE is set; OpenGL was deliberately skipped");
++        return 0;
++    }
++    SDL_ClearError();
++    if(SDL_GL_LoadLibrary(NULL)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_LoadLibrary(default) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL library load failed: %s\n",g_gl_fallback_reason);
++        return 0;
++    }
++    SDL_ClearError();
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(major version) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(minor version) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(core profile) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
++    }
++    if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER,1)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_SetAttribute(double buffer) failed: %.220s",SDL_GetError()); SDL_GL_UnloadLibrary(); return 0;
++    }
++    SDL_ClearError();
++    g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,
++                           SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
++    if(!g_win) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_CreateWindow(SDL_WINDOW_OPENGL) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL window creation failed: %s\n",g_gl_fallback_reason);
++        SDL_GL_UnloadLibrary();
++        return 0;
++    }
++    SDL_ClearError(); g_glctx=SDL_GL_CreateContext(g_win);
++    if(!g_glctx) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"SDL_GL_CreateContext(OpenGL 3.3 core) failed: %.220s",SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: OpenGL context creation failed: %s\n",g_gl_fallback_reason);
++        SDL_DestroyWindow(g_win);g_win=NULL;return 0;
++    }
++    g_gl_swap_interval_set_result=SDL_GL_SetSwapInterval(0);
++    g_gl_swap_interval_actual=SDL_GL_GetSwapInterval();
++    const char* e=getenv("DQIX_SCALE3D"); if(e){g_scale3d=atoi(e);g_res_auto=0;}
++    if(getenv("DQIX_SMOOTH"))g_smooth=atoi(getenv("DQIX_SMOOTH"))!=0;
++    if(getenv("DQIX_OUTLINE"))g_gl_outline=atoi(getenv("DQIX_OUTLINE"));
++    if(getenv("DQIX_SOFTALPHA"))g_gl_soft_alpha=atoi(getenv("DQIX_SOFTALPHA"));
++    if(getenv("DQIX_SOFTSHADE"))g_gl_soft_shade=atoi(getenv("DQIX_SOFTSHADE"));
+     gl_set_smooth(g_smooth);
+-    if (getenv("DQIX_HDTEXT")) g_hd_text = atoi(getenv("DQIX_HDTEXT")) != 0;   /* tests */
+-    gl_hd_fonts(getenv("DQIX_TXFONTS") ? getenv("DQIX_TXFONTS") : "fonts");   /* (tests: replays run elsewhere) */
+-    gl_set_hd_text(g_hd_text);
+-    gl_set_texture_pack(g_tex_pack); gl_set_tex_upscale(g_tex_up);
+-    if (!gl_render_init(g_res_auto ? (getenv("DQIX_AUTO_FROM") ? 2 : 4) : g_scale3d)) {
+-        fprintf(stderr, "OpenGL renderer failed to start: using the software renderer\n");
+-        SDL_GL_DeleteContext(g_glctx); SDL_DestroyWindow(g_win); g_win = NULL; return 0;
++    if(getenv("DQIX_HDTEXT"))g_hd_text=atoi(getenv("DQIX_HDTEXT"))!=0;
++    gl_hd_fonts(getenv("DQIX_TXFONTS")?getenv("DQIX_TXFONTS"):"fonts");
++    gl_set_hd_text(g_hd_text);gl_set_texture_pack(g_tex_pack);gl_set_tex_upscale(g_tex_up);
++    SDL_ClearError();
++    if(!gl_render_init(g_res_auto?(getenv("DQIX_AUTO_FROM")?2:4):g_scale3d)) {
++        const char* error=SDL_GetError();
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"gl_render_init failed (SDL_GetError=%s)",error&&error[0]?error:"no SDL error reported");
++        fprintf(stderr,"renderer-diagnostics: OpenGL renderer initialization failed: %s\n",g_gl_fallback_reason);
++        SDL_GL_DeleteContext(g_glctx);g_glctx=NULL;SDL_DestroyWindow(g_win);g_win=NULL;return 0;
+     }
+-    g_gl = 1;
+-    g_renderer3d_verify = getenv("DQIX_GL_VERIFY") != NULL;
+-    return 1;
++    g_gl=1;g_renderer3d_verify=getenv("DQIX_GL_VERIFY")!=NULL;return 1;
+ }
++static int try_gl_with_x11_retry(void) {
++    const char* selected_driver=SDL_GetCurrentVideoDriver();
++    const char* requested_driver=getenv("SDL_VIDEODRIVER");
++    const char* x_display=getenv("DISPLAY");
++    char original_driver[64], wayland_reason[320], x11_reason[320];
++    static const char window_failure[]="SDL_CreateWindow(SDL_WINDOW_OPENGL) failed";
+ 
++    if(try_gl()) return 1;
++    if(strncmp(g_gl_fallback_reason,window_failure,sizeof window_failure-1)!=0 ||
++       !selected_driver || strcmp(selected_driver,"wayland")!=0 ||
++       (requested_driver&&requested_driver[0]) || !x_display || !x_display[0]) return 0;
++
++    snprintf(original_driver,sizeof original_driver,"%s",selected_driver);
++    snprintf(wayland_reason,sizeof wayland_reason,"%s",g_gl_fallback_reason);
++    fprintf(stderr,"renderer-diagnostics: retrying OpenGL with X11/XWayland after Wayland window failure: %s\n",wayland_reason);
++
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    (void)SDL_setenv("SDL_VIDEODRIVER","x11",1);
++    SDL_ClearError();
++    if(SDL_InitSubSystem(SDL_INIT_VIDEO)==0) {
++        if(try_gl()) {
++            fprintf(stderr,"renderer-diagnostics: OpenGL retry via X11 succeeded after Wayland failure: %s\n",wayland_reason);
++            return 1;
++        }
++        snprintf(x11_reason,sizeof x11_reason,"%s",g_gl_fallback_reason[0]?g_gl_fallback_reason:"OpenGL retry failed without a reported reason");
++    } else {
++        snprintf(x11_reason,sizeof x11_reason,"SDL_InitSubSystem(video, x11) failed: %.220s",SDL_GetError());
++    }
++
++    fprintf(stderr,"renderer-diagnostics: OpenGL retry via X11 failed: %s\n",x11_reason);
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    if(SDL_setenv("SDL_VIDEODRIVER",original_driver,1)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++                 "Wayland OpenGL failed (%.90s); X11 retry failed (%.90s); could not restore SDL_VIDEODRIVER",
++                 wayland_reason,x11_reason);
++        return 0;
++    }
++    SDL_ClearError();
++    if(SDL_InitSubSystem(SDL_INIT_VIDEO)!=0) {
++        snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++                 "Wayland OpenGL failed (%.75s); X11 retry failed (%.75s); restoring Wayland failed: %.70s",
++                 wayland_reason,x11_reason,SDL_GetError());
++        fprintf(stderr,"renderer-diagnostics: video-driver restore failed: %s\n",SDL_GetError());
++        return 0;
++    }
++    snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,
++             "Wayland OpenGL failed (%.115s); X11 retry failed (%.115s)",wayland_reason,x11_reason);
++    fprintf(stderr,"renderer-diagnostics: restored video driver=%s; continuing with SDL_Renderer fallback\n",original_driver);
++    return 0;
++}
++
++static const char* renderer_or_unknown(const char* s){return s&&s[0]?s:"(unavailable)";}
++static void renderer_log_gl_attribute(const char* name,SDL_GLattr attr) {
++    int v=0; if(SDL_GL_GetAttribute(attr,&v)==0)fprintf(stderr,"renderer-diagnostics: gl.attribute.%s=%d\n",name,v);
++    else fprintf(stderr,"renderer-diagnostics: gl.attribute.%s=unavailable error=%s\n",name,renderer_or_unknown(SDL_GetError()));
++}
++/* stderr is captured by the launcher into the workspace-root devlog.log. */
++static void renderer_diagnostics(void) {
++    SDL_version cv,rv;SDL_VERSION(&cv);SDL_GetVersion(&rv);
++    const char* vd=SDL_GetCurrentVideoDriver();
++    fprintf(stderr,"renderer-diagnostics: begin\n");
++    fprintf(stderr,"renderer-diagnostics: ready=%s\n",
++        g_headless?"headless":((g_gl||(g_ren&&g_tex))?"yes":"no"));
++    fprintf(stderr,"renderer-diagnostics: game_renderer_fallback=%s\n",
++        g_headless?"not-applicable":(g_gl?"false":"true"));
++    fprintf(stderr,"renderer-diagnostics: render_path=%s\n",
++        g_headless?"headless/no-window":(g_gl?"OpenGL + gl_render":(g_ren?"SDL_Renderer + software 3D":"initialization failed")));
++    fprintf(stderr,"renderer-diagnostics: fallback_reason=%s\n",
++        g_headless?"not-applicable (DQIX_NOWINDOW)":(g_gl?"none":renderer_or_unknown(g_gl_fallback_reason)));
++    fprintf(stderr,"renderer-diagnostics: platform=%s sdl.compile=%u.%u.%u sdl.runtime=%u.%u.%u video_driver=%s SDL_VIDEODRIVER=%s SDL_RENDER_DRIVER=%s\n",
++        renderer_or_unknown(SDL_GetPlatform()),cv.major,cv.minor,cv.patch,rv.major,rv.minor,rv.patch,
++        renderer_or_unknown(vd),renderer_or_unknown(getenv("SDL_VIDEODRIVER")),renderer_or_unknown(getenv("SDL_RENDER_DRIVER")));
++    fprintf(stderr,"renderer-diagnostics: env.DQIX_SOFTWARE=%s env.DQIX_MODE=%s env.DQIX_SCALE=%s env.DQIX_SCALE3D=%s\n",
++        renderer_or_unknown(getenv("DQIX_SOFTWARE")),renderer_or_unknown(getenv("DQIX_MODE")),
++        renderer_or_unknown(getenv("DQIX_SCALE")),renderer_or_unknown(getenv("DQIX_SCALE3D")));
++    fprintf(stderr,"renderer-diagnostics: game_mode=%s scale=%d scale3d=%d scale3d_auto=%s fullscreen=%s\n",
++        g_classic?"classic":"enhanced",g_scale,g_scale3d,g_res_auto?"true":"false",g_fullscreen?"true":"false");
++    if(g_headless)fprintf(stderr,"renderer-diagnostics: window=not-created; no video renderer requested\n");
++    else if(g_win) {
++        int w=0,h=0,dw=0,dh=0;Uint32 flags=SDL_GetWindowFlags(g_win);int display=SDL_GetWindowDisplayIndex(g_win);
++        SDL_GetWindowSize(g_win,&w,&h);SDL_GL_GetDrawableSize(g_win,&dw,&dh);
++        fprintf(stderr,"renderer-diagnostics: window.id=%u flags=0x%08x size=%dx%d drawable=%dx%d display=%d opengl=%s resizable=%s high_dpi=%s fullscreen=%s\n",
++            SDL_GetWindowID(g_win),flags,w,h,dw,dh,display,(flags&SDL_WINDOW_OPENGL)?"true":"false",
++            (flags&SDL_WINDOW_RESIZABLE)?"true":"false",(flags&SDL_WINDOW_ALLOW_HIGHDPI)?"true":"false",
++            (flags&(SDL_WINDOW_FULLSCREEN|SDL_WINDOW_FULLSCREEN_DESKTOP))?"true":"false");
++        if(display>=0){SDL_DisplayMode dm;if(SDL_GetCurrentDisplayMode(display,&dm)==0)
++            fprintf(stderr,"renderer-diagnostics: display.mode=%dx%d refresh_hz=%d format=%s\n",dm.w,dm.h,dm.refresh_rate,SDL_GetPixelFormatName(dm.format));
++            else fprintf(stderr,"renderer-diagnostics: display.mode=unavailable error=%s\n",renderer_or_unknown(SDL_GetError()));}
++    } else if(g_sdl_window_failure[0])fprintf(stderr,"renderer-diagnostics: window.creation_error=%s\n",g_sdl_window_failure);
++    if(g_gl&&g_glctx) {
++        typedef const unsigned char* (*GetStringFn)(unsigned int);
++        GetStringFn gs=(GetStringFn)SDL_GL_GetProcAddress("glGetString");
++        renderer_log_gl_attribute("context_major",SDL_GL_CONTEXT_MAJOR_VERSION);
++        renderer_log_gl_attribute("context_minor",SDL_GL_CONTEXT_MINOR_VERSION);
++        renderer_log_gl_attribute("context_profile",SDL_GL_CONTEXT_PROFILE_MASK);
++        renderer_log_gl_attribute("context_flags",SDL_GL_CONTEXT_FLAGS);
++        renderer_log_gl_attribute("double_buffer",SDL_GL_DOUBLEBUFFER);
++        renderer_log_gl_attribute("depth_size",SDL_GL_DEPTH_SIZE);renderer_log_gl_attribute("stencil_size",SDL_GL_STENCIL_SIZE);
++        renderer_log_gl_attribute("red_size",SDL_GL_RED_SIZE);renderer_log_gl_attribute("green_size",SDL_GL_GREEN_SIZE);
++        renderer_log_gl_attribute("blue_size",SDL_GL_BLUE_SIZE);renderer_log_gl_attribute("alpha_size",SDL_GL_ALPHA_SIZE);
++        renderer_log_gl_attribute("multisample_buffers",SDL_GL_MULTISAMPLEBUFFERS);renderer_log_gl_attribute("multisample_samples",SDL_GL_MULTISAMPLESAMPLES);
++        fprintf(stderr,"renderer-diagnostics: gl.request=3.3-core swap_interval_set_result=%d swap_interval_actual=%d\n",g_gl_swap_interval_set_result,g_gl_swap_interval_actual);
++        fprintf(stderr,"renderer-diagnostics: gl.vendor=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F00u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: gl.renderer=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F01u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: gl.version=%s\n",gs?renderer_or_unknown((const char*)gs(0x1F02u)):"(unavailable)");
++        fprintf(stderr,"renderer-diagnostics: glsl.version=%s\n",gs?renderer_or_unknown((const char*)gs(0x8B8Cu)):"(unavailable)");
++    } else {
++        fprintf(stderr,"renderer-diagnostics: gl.context_present=false requested=3.3-core\n");
++        fprintf(stderr,"renderer-diagnostics: fallback.window_error=%s accelerated_renderer_error=%s software_renderer_error=%s texture_error=%s\n",
++            renderer_or_unknown(g_sdl_window_failure),renderer_or_unknown(g_sdl_renderer_accelerated_error),
++            renderer_or_unknown(g_sdl_renderer_software_error),renderer_or_unknown(g_sdl_texture_failure));
++        if(g_ren){
++            SDL_RendererInfo i;if(SDL_GetRendererInfo(g_ren,&i)==0){
++                fprintf(stderr,"renderer-diagnostics: sdl_renderer.name=%s flags=0x%08x accelerated=%s software=%s vsync=%s target_texture=%s max_texture=%dx%d format_count=%u\n",
++                    renderer_or_unknown(i.name),i.flags,(i.flags&SDL_RENDERER_ACCELERATED)?"true":"false",
++                    (i.flags&SDL_RENDERER_SOFTWARE)?"true":"false",(i.flags&SDL_RENDERER_PRESENTVSYNC)?"true":"false",
++                    (i.flags&SDL_RENDERER_TARGETTEXTURE)?"true":"false",i.max_texture_width,i.max_texture_height,i.num_texture_formats);
++                for(Uint32 n=0;n<i.num_texture_formats&&n<16;n++)
++                    fprintf(stderr,"renderer-diagnostics: sdl_renderer.texture_format[%u]=%s\n",n,SDL_GetPixelFormatName(i.texture_formats[n]));
++            }else fprintf(stderr,"renderer-diagnostics: sdl_renderer.info_error=%s\n",renderer_or_unknown(SDL_GetError()));
++            int ow=0,oh=0;if(SDL_GetRendererOutputSize(g_ren,&ow,&oh)==0)fprintf(stderr,"renderer-diagnostics: sdl_renderer.output_size=%dx%d\n",ow,oh);
++            else fprintf(stderr,"renderer-diagnostics: sdl_renderer.output_size_error=%s\n",renderer_or_unknown(SDL_GetError()));
++        }else fprintf(stderr,"renderer-diagnostics: sdl_renderer=not-created\n");
++        if(g_tex){Uint32 fmt=SDL_PIXELFORMAT_UNKNOWN;int access=-1,w=0,h=0;
++            if(SDL_QueryTexture(g_tex,&fmt,&access,&w,&h)==0)fprintf(stderr,"renderer-diagnostics: sdl_texture.format=%s access=%d size=%dx%d\n",SDL_GetPixelFormatName(fmt),access,w,h);
++            else fprintf(stderr,"renderer-diagnostics: sdl_texture.query_error=%s\n",renderer_or_unknown(SDL_GetError()));
++        }else fprintf(stderr,"renderer-diagnostics: sdl_texture=not-created\n");
++    }
++    fprintf(stderr,"renderer-diagnostics: end\n");
++}
++
+ /* The window's icon: the game's own, the 32x32 picture the DS menu shows for
+  * the cartridge (in the ROM's banner). On Windows, dqix.exe normally carries
+  * it already (made from the ROM by the build), and Windows takes it from there
+@@ -984,14 +1167,19 @@
+     if (!g_headless) {
+         const char* sc = getenv("DQIX_SCALE");
+         if (sc) { g_scale = atoi(sc); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+-        if (!try_gl()) {
+-            g_win = SDL_CreateWindow("Dragon Quest IX", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * g_scale, 384 * g_scale,
+-                                     SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+-            if (!g_win) { fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError()); exit(1); }
+-            g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_ACCELERATED);
+-            if (!g_ren) g_ren = SDL_CreateRenderer(g_win, -1, SDL_RENDERER_SOFTWARE);
+-            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+-            g_tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 256, 384);
++        if (!try_gl_with_x11_retry()) {
++            if(!g_gl_fallback_reason[0])snprintf(g_gl_fallback_reason,sizeof g_gl_fallback_reason,"OpenGL initialization failed without a specific reason");
++            SDL_ClearError();
++            g_win=SDL_CreateWindow("Dragon Quest IX",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,256*g_scale,384*g_scale,SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
++            if(!g_win){snprintf(g_sdl_window_failure,sizeof g_sdl_window_failure,"SDL_CreateWindow for SDL_Renderer failed: %.220s",SDL_GetError());renderer_diagnostics();exit(1);}
++            SDL_ClearError();g_ren=SDL_CreateRenderer(g_win,-1,SDL_RENDERER_ACCELERATED);
++            if(!g_ren){snprintf(g_sdl_renderer_accelerated_error,sizeof g_sdl_renderer_accelerated_error,"%.300s",SDL_GetError());SDL_ClearError();
++                g_ren=SDL_CreateRenderer(g_win,-1,SDL_RENDERER_SOFTWARE);
++                if(!g_ren)snprintf(g_sdl_renderer_software_error,sizeof g_sdl_renderer_software_error,"%.300s",SDL_GetError());}
++            if(!g_ren){renderer_diagnostics();exit(1);}
++            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"nearest");SDL_ClearError();
++            g_tex=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,256,384);
++            if(!g_tex){snprintf(g_sdl_texture_failure,sizeof g_sdl_texture_failure,"SDL_CreateTexture(ARGB8888 streaming 256x384) failed: %.220s",SDL_GetError());renderer_diagnostics();exit(1);}
+         }
+         window_icon();
+         {   /* started again by the program itself (reset, sessions): the window where it was */
+@@ -1017,6 +1205,7 @@
+         session_lobby_hook = lobby_hook;
+         air_idle_hook = idle_pump;
+     }
++    renderer_diagnostics();
+     SDL_AudioSpec want, have;
+     SDL_zero(want);
+     want.freq = 32768; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024; want.callback = audio_cb;
+@@ -1476,6 +1665,104 @@
+     }
+ }
+ 
++#ifndef _WIN32
++static const char *linux_overlay_renderer_name(void) {
++    SDL_RendererInfo info;
++    if (g_gl) return "OpenGL";
++    if (g_ren && SDL_GetRendererInfo(g_ren, &info) == 0 && info.name && info.name[0]) return info.name;
++    return "SDL_Renderer";
++}
++
++static const uint8_t *linux_overlay_pixels(void) {
++    const size_t bytes = (size_t)DQIX_LINUX_OVERLAY_WIDTH * DQIX_LINUX_OVERLAY_HEIGHT * 4;
++    if (!g_linux_overlay_open) return NULL;
++    if (!g_linux_overlay_rgba) {
++        g_linux_overlay_rgba = (uint8_t *)malloc(bytes);
++        if (!g_linux_overlay_rgba) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: cannot allocate the RGBA surface\n");
++            g_linux_overlay_error_reported = 1;
++            return NULL;
++        }
++    }
++    dqix_linux_overlay_render_rgba(g_linux_overlay_rgba, bytes, g_linux_overlay_selection,
++        g_classic, g_fullscreen, g_gl, linux_overlay_renderer_name());
++    return g_linux_overlay_rgba;
++}
++
++static void linux_overlay_draw_gl(SDL_Window *window) {
++    const uint8_t *pixels;
++    int width = 0, height = 0;
++    if (!g_linux_overlay_open || !g_gl || !window) return;
++    pixels = linux_overlay_pixels();
++    if (!pixels) return;
++    SDL_GL_GetDrawableSize(window, &width, &height);
++    if (!dqix_linux_overlay_gl_draw(pixels, DQIX_LINUX_OVERLAY_WIDTH, DQIX_LINUX_OVERLAY_HEIGHT,
++                                    width, height) && !g_linux_overlay_error_reported) {
++        fprintf(stderr, "linux-overlay: OpenGL draw failed; see earlier overlay diagnostics\n");
++        g_linux_overlay_error_reported = 1;
++    }
++}
++
++static void linux_overlay_draw_sdl(void) {
++    const uint8_t *pixels;
++    SDL_Rect destination;
++    int width = 0, height = 0, logical_width = 0, logical_height = 0;
++    if (!g_linux_overlay_open || g_gl || !g_ren) return;
++    pixels = linux_overlay_pixels();
++    if (!pixels) return;
++    if (!g_linux_overlay_texture) {
++        g_linux_overlay_texture = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_RGBA32,
++            SDL_TEXTUREACCESS_STREAMING, DQIX_LINUX_OVERLAY_WIDTH, DQIX_LINUX_OVERLAY_HEIGHT);
++        if (!g_linux_overlay_texture) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture creation failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++            return;
++        }
++        if (SDL_SetTextureBlendMode(g_linux_overlay_texture, SDL_BLENDMODE_BLEND) != 0) {
++            if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture blend mode failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++        }
++    }
++    if (SDL_UpdateTexture(g_linux_overlay_texture, NULL, pixels, DQIX_LINUX_OVERLAY_WIDTH * 4) != 0) {
++        if (!g_linux_overlay_error_reported) fprintf(stderr, "linux-overlay: SDL texture update failed: %s\n", SDL_GetError());
++        g_linux_overlay_error_reported = 1;
++        return;
++    }
++    SDL_RenderGetLogicalSize(g_ren, &logical_width, &logical_height);
++    if (logical_width > 0 && logical_height > 0) { width = logical_width; height = logical_height; }
++    else if (SDL_GetRendererOutputSize(g_ren, &width, &height) != 0) return;
++
++    {
++        Uint8 old_r = 0, old_g = 0, old_b = 0, old_a = 255;
++        SDL_BlendMode old_blend = SDL_BLENDMODE_NONE;
++        int have_color = SDL_GetRenderDrawColor(g_ren, &old_r, &old_g, &old_b, &old_a) == 0;
++        int have_blend = SDL_GetRenderDrawBlendMode(g_ren, &old_blend) == 0;
++        SDL_Rect dim = {0, 0, width, height};
++        if (SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND) == 0 &&
++            SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 118) == 0) {
++            if (SDL_RenderFillRect(g_ren, &dim) != 0 && !g_linux_overlay_error_reported) {
++                fprintf(stderr, "linux-overlay: background dim failed: %s\n", SDL_GetError());
++                g_linux_overlay_error_reported = 1;
++            }
++        } else if (!g_linux_overlay_error_reported) {
++            fprintf(stderr, "linux-overlay: background dim setup failed: %s\n", SDL_GetError());
++            g_linux_overlay_error_reported = 1;
++        }
++        if (have_color) SDL_SetRenderDrawColor(g_ren, old_r, old_g, old_b, old_a);
++        if (have_blend) SDL_SetRenderDrawBlendMode(g_ren, old_blend);
++    }
++
++    if (!dqix_linux_overlay_fit_rect(width, height,
++                                     &destination.x, &destination.y,
++                                     &destination.w, &destination.h)) return;
++    if (SDL_RenderCopy(g_ren, g_linux_overlay_texture, NULL, &destination) != 0 &&
++        !g_linux_overlay_error_reported) {
++        fprintf(stderr, "linux-overlay: SDL_RenderCopy failed: %s\n", SDL_GetError());
++        g_linux_overlay_error_reported = 1;
++    }
++}
++#endif
++
+ static void present_gl(void) {
+     auto_scale();
+     present_gl_state();
+@@ -1547,12 +1834,18 @@
+         v.overlay = 1;
+     }
+     gl_present(&v);
++#ifndef _WIN32
++    linux_overlay_draw_gl(g_win);
++#endif
+     window_shot_hook(w, h, 0);
+     SDL_GL_SwapWindow(g_win);
+     if (g_win2 && SDL_GL_MakeCurrent(g_win2, g_glctx) == 0) {   /* two windows: the other screen */
+         int w2, h2; SDL_GL_GetDrawableSize(g_win2, &w2, &h2);
+         GlPresent v2; canvas_layout_for(&v2, w2, h2, 1); v2.again = 1;
+         gl_present(&v2);
++#ifndef _WIN32
++        linux_overlay_draw_gl(g_win2);
++#endif
+         window_shot_hook(w2, h2, 1);
+         SDL_GL_SwapWindow(g_win2);
+         SDL_GL_MakeCurrent(g_win, g_glctx);
+@@ -1581,6 +1874,9 @@
+         if (db.w > 0) SDL_RenderCopy(g_ren, g_tex, &bot, &db);
+     }
+     test_hooks();
++#ifndef _WIN32
++    linux_overlay_draw_sdl();
++#endif
+     SDL_RenderPresent(g_ren);
+ }
+ 
+@@ -2987,9 +3283,124 @@
+     }
+ }
+ 
++#ifndef _WIN32
++static void linux_overlay_move_selection(int delta) {
++    g_linux_overlay_selection = (g_linux_overlay_selection + delta + 4) % 4;
++}
++
++static void linux_overlay_close(int resume_game) {
++    g_linux_overlay_open = 0;
++    g_paused = resume_game ? 0 : g_linux_overlay_saved_paused;
++    g_next_frame = SDL_GetPerformanceCounter();
++    g_fps_t0 = 0;
++    g_pad_resync = 1;
++}
++
++static void linux_overlay_activate(void) {
++    switch (g_linux_overlay_selection) {
++    case 0:
++        linux_overlay_close(1);
++        break;
++    case 1:
++        if (g_gl) do_action(g_classic ? MI_ENHANCED : MI_CLASSIC);
++        else notice("Enhanced mode requires OpenGL");
++        break;
++    case 2:
++        do_action(MI_FULL);
++        break;
++    case 3:
++        quit_ask();
++        break;
++    }
++}
++
++static int linux_overlay_handle_event(const SDL_Event *event) {
++    static int axis_y_latched;
++    if (event->type == SDL_KEYDOWN && !event->key.repeat &&
++        event->key.keysym.scancode == SDL_SCANCODE_ESCAPE && g_cap_action < 0 &&
++        g_win && !g_headless) {
++        if (g_linux_overlay_open) linux_overlay_close(0);
++        else {
++            g_linux_overlay_open = 1;
++            g_linux_overlay_selection = 0;
++            g_linux_overlay_saved_paused = g_paused;
++            g_paused = 1;
++            g_next_frame = SDL_GetPerformanceCounter();
++            g_pad_resync = 1;
++        }
++        return 1;
++    }
++    if (!g_linux_overlay_open) return 0;
++
++    switch (event->type) {
++    case SDL_KEYUP:
++        return 1;
++    case SDL_KEYDOWN:
++        if (event->key.repeat) return 1;
++        switch (event->key.keysym.sym) {
++        case SDLK_UP: linux_overlay_move_selection(-1); break;
++        case SDLK_DOWN: linux_overlay_move_selection(1); break;
++        case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE:
++            linux_overlay_activate(); break;
++        default: break;
++        }
++        return 1;
++    case SDL_CONTROLLERBUTTONUP:
++        return 1;
++    case SDL_CONTROLLERBUTTONDOWN:
++        switch (event->cbutton.button) {
++        case SDL_CONTROLLER_BUTTON_DPAD_UP: linux_overlay_move_selection(-1); break;
++        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: linux_overlay_move_selection(1); break;
++        case SDL_CONTROLLER_BUTTON_A: linux_overlay_activate(); break;
++        case SDL_CONTROLLER_BUTTON_B: linux_overlay_close(0); break;
++        default: break;
++        }
++        return 1;
++    case SDL_CONTROLLERAXISMOTION:
++        if (event->caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
++            if (!axis_y_latched && event->caxis.value < -16000) {
++                linux_overlay_move_selection(-1); axis_y_latched = 1;
++            } else if (!axis_y_latched && event->caxis.value > 16000) {
++                linux_overlay_move_selection(1); axis_y_latched = 1;
++            } else if (event->caxis.value > -7000 && event->caxis.value < 7000) axis_y_latched = 0;
++        }
++        return 1;
++    case SDL_MOUSEBUTTONDOWN:
++    case SDL_MOUSEBUTTONUP:
++        if (event->type == SDL_MOUSEBUTTONUP && event->button.button == SDL_BUTTON_LEFT) {
++            int ww = 0, wh = 0, ox = event->button.x, oy = event->button.y;
++            int fit_x = 0, fit_y = 0, fit_w = 0, fit_h = 0;
++            SDL_GetWindowSize(g_win, &ww, &wh);
++            if (dqix_linux_overlay_fit_rect(ww, wh, &fit_x, &fit_y, &fit_w, &fit_h) &&
++                ox >= fit_x && ox < fit_x + fit_w && oy >= fit_y && oy < fit_y + fit_h) {
++                ox = (ox - fit_x) * DQIX_LINUX_OVERLAY_WIDTH / fit_w;
++                oy = (oy - fit_y) * DQIX_LINUX_OVERLAY_HEIGHT / fit_h;
++                if (ox >= DQIX_LINUX_OVERLAY_ROW_X &&
++                    ox < DQIX_LINUX_OVERLAY_ROW_X + DQIX_LINUX_OVERLAY_ROW_WIDTH) {
++                    for (int row = 0; row < 4; ++row) {
++                        int y = DQIX_LINUX_OVERLAY_ROW0 + row * DQIX_LINUX_OVERLAY_ROW_STEP;
++                        if (oy >= y - 12 && oy < y + DQIX_LINUX_OVERLAY_ROW_HEIGHT - 12) {
++                            g_linux_overlay_selection = row;
++                            linux_overlay_activate();
++                            break;
++                        }
++                    }
++                }
++            }
++        }
++        return 1;
++    default:
++        return 0;
++    }
++}
++#endif
++
+ static void handle_events(void) {
+     SDL_Event e;
+     while (SDL_PollEvent(&e)) {
++#ifndef _WIN32
++        if (linux_overlay_handle_event(&e)) continue;
++#endif
+         int mi = menu_command(&e);
+         if (mi) { do_action(mi); continue; }
+         if (ingame_menu_is_open() && g_win && g_cap_action < 0) {   /* the in-game menu takes the keys and the mouse */
+@@ -3239,4 +3650,13 @@
+     }
+ }
+ 
+-void frontend_shutdown(void) {}
++void frontend_shutdown(void) {
++#ifndef _WIN32
++    if (g_gl && g_win && g_glctx) (void)SDL_GL_MakeCurrent(g_win, g_glctx);
++    dqix_linux_overlay_gl_shutdown();
++    if (g_linux_overlay_texture) SDL_DestroyTexture(g_linux_overlay_texture);
++    g_linux_overlay_texture = NULL;
++    free(g_linux_overlay_rgba);
++    g_linux_overlay_rgba = NULL;
++#endif
++}
+--- a/build.mk
++++ b/build.mk
+@@ -12,7 +12,7 @@
+ OUT ?= dqix
+ 
+ RT = $(wildcard runtime/*.c)
+-RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) runtime/frontend_$(FRONTEND).c
++RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) $(if $(filter sdl,$(FRONTEND)),third_party/extra/linux/src/runtime/frontend_sdl.c,runtime/frontend_$(FRONTEND).c)
+ 
+ ifeq ($(FRONTEND),sdl)
+ SDL_CFLAGS ?= $(shell sdl2-config --cflags)
+@@ -31,7 +31,7 @@
+ 
+ GENOBJ = $(patsubst $(GEN)/%.c,$(OBJ)/gen/%.o,$(wildcard $(GEN)/*.c))
+ GEN7OBJ = $(patsubst $(GEN7)/%.c,$(OBJ)/gen7/%.o,$(wildcard $(GEN7)/*.c))
+-RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(RT))
++RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter runtime/%,$(RT))) $(if $(filter third_party/extra/linux/src/runtime/frontend_sdl.c,$(RT)),$(OBJ)/rt/frontend_sdl.o $(OBJ)/rt/linux_overlay.o $(OBJ)/rt/linux_overlay_gl.o)
+ 
+ # RES: optional extra objects for the program only, e.g. the Windows icon
+ # resource the build makes from the ROM (tools/rom_icon.py)
+@@ -42,7 +42,7 @@
+ # The game as a library (CORE=dqixcore.dll / dqixcore.so): in a session the
+ # other players' DSes run from copies of it on one thread (hosting.c). Same
+ # objects, without the window; on Linux everything needs PIC=-fPIC.
+-CORE_RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter-out runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c,$(RT)) runtime/frontend_none.c)
++CORE_RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter runtime/%,$(filter-out runtime/frontend_%.c third_party/extra/linux/src/runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c,$(RT))) runtime/frontend_none.c
+ ifeq ($(OS),Windows_NT)
+ CORE_LDFLAGS ?= -static-libgcc
+ else
+@@ -92,8 +92,16 @@
+ 	@mkdir -p $(dir $@)
+ 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+ 
+-$(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/menu_ingame.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
++$(OBJ)/rt/frontend_sdl.o: third_party/extra/linux/src/runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/menu_ingame.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h third_party/extra/linux/overlay/linux_overlay.h third_party/extra/linux/overlay/linux_overlay_gl.h
+ 	@mkdir -p $(dir $@)
++$(OBJ)/rt/linux_overlay.o: third_party/extra/linux/overlay/linux_overlay.c third_party/extra/linux/overlay/linux_overlay.h
++	@mkdir -p $(dir $@)
++	$(CC) -O2 -g -Wall $(PIC) -Ithird_party/extra/linux/overlay -c $< -o $@
++
++$(OBJ)/rt/linux_overlay_gl.o: third_party/extra/linux/overlay/linux_overlay_gl.c third_party/extra/linux/overlay/linux_overlay_gl.h third_party/extra/linux/overlay/linux_overlay.h
++	@mkdir -p $(dir $@)
++	$(CC) -O2 -g -Wall $(PIC) $(SDL_CFLAGS) -Ithird_party/extra/linux/overlay -c $< -o $@
++
+ 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+ 
+ # Sessions need every PC to compute exactly the same: no stack garbage in uninitialised variables.
+--- a/tools/build-game.sh
++++ b/tools/build-game.sh
+@@ -12,8 +12,18 @@
+ STEP="starting"
+ # a step that fails without a message of its own still says which it was
+ trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "   The build stopped while: $STEP (error $rc)."; fi' EXIT
+-cd "$(dirname "$0")/.."
+-ROM="$1"
++# This copy is Linux-only; Windows/MSYS2 keeps using the canonical script.
++case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Linux mirror entry point cannot run on Windows." >&2; exit 2 ;; esac
++WORKSPACE_ROOT="$(pwd -P)"
++if [ -n "$DQIX_WORKSPACE_ROOT" ]; then WORKSPACE_ROOT="$DQIX_WORKSPACE_ROOT"; fi
++ROM_INPUT="$1"
++[ -n "$ROM_INPUT" ] || { echo "Usage: Linux build entry point <rom.nds>"; exit 2; }
++case "$ROM_INPUT" in /*) ;; *) ROM_INPUT="$(pwd -P)/$ROM_INPUT" ;; esac
++[ -d "$WORKSPACE_ROOT" ] || { echo "Workspace root not found: $WORKSPACE_ROOT"; exit 2; }
++cd "$WORKSPACE_ROOT"
++LINUX_MAKEFILE="third_party/extra/linux/src/build.mk"
++[ -f "$LINUX_MAKEFILE" ] || { echo "Linux mirror makefile not found: $LINUX_MAKEFILE"; exit 2; }
++ROM="$ROM_INPUT"
+ [ -f "$ROM" ] || { echo "No ROM given (or it doesn't exist): $ROM"; exit 1; }
+ 
+ STEP="checking the ROM"; echo "== Checking the ROM"
+@@ -94,7 +104,7 @@
+     cp /ucrt64/bin/SDL2.dll game/ ;;
+ *)
+     EXE=game/dqix
+-    make -j"$(nproc)" -f build.mk GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.so PIC=-fPIC \
++    make -j"$(nproc)" -f "$LINUX_MAKEFILE" GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.so PIC=-fPIC \
+          CFLAGS="-O1 -w" DEFS=-DRECOMP_TRACE SDL_CFLAGS="${SDL_CFLAGS:-$(sdl2-config --cflags)}" SDL_LIBS="${SDL_LIBS:-$(sdl2-config --libs)}" "$EXE" core ;;
+ esac
+ 
+@@ -135,7 +145,16 @@
+ BAT
+ cat > game/play.sh <<'SH'
+ #!/bin/sh
+-cd "$(dirname "$0")" && exec ./dqix data/dqix.nds data/code 0 1 dqix.sav
++set -eu
++GAME_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
++WORKSPACE_DIR="$(CDPATH= cd -- "$GAME_DIR/.." && pwd)"
++GL_COMPAT="$WORKSPACE_DIR/third_party/extra/linux/tools/linux-gl-compat.sh"
++if [ -r "$GL_COMPAT" ]; then
++    . "$GL_COMPAT"
++    dqix_linux_gl_apply
++fi
++cd "$GAME_DIR"
++exec ./dqix data/dqix.nds data/code 0 1 dqix.sav
+ SH
+ chmod +x game/play.sh
+ echo
