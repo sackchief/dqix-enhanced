@@ -2518,6 +2518,11 @@ static void lobby_hook(void) {
         }
     }
     menu_sync();
+    {   /* DQIX_SESSION_AUTOSTART=n (tests): the host starts once n players are in */
+        static int want = -1; if (want < 0) { const char* e = getenv("DQIX_SESSION_AUTOSTART"); want = e ? atoi(e) : 0; }
+        SessionInfo si; session_info(&si);
+        if (want > 0 && si.host && si.state == 2 && si.n >= want) { session_start_now(); want = 0; }
+    }
     { int act = 0; ingame_menu_pad(g_pad, &act, SDL_GetTicks()); }
     lobby_window();
     lobby_draw();

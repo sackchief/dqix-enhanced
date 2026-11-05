@@ -1,6 +1,16 @@
 **The newest work, less tested.** Use the stable release for your main
 adventure; try this one in its own folder with a copy of your save.
 
+**New in v34-nightly2**
+
+- **Fewer messages through the relay** ("Join a friend" with a code): the
+  host sends one message for all its friends instead of one each, about a
+  sixth fewer with three players and a third fewer with four, so the
+  relay's daily allowance lasts longer. Older versions still work with it.
+- **When the relay is full for the day**, joining with a code now says so
+  and what to do meanwhile (the host's address, or a free virtual LAN:
+  Tailscale, ZeroTier or Radmin VPN), instead of a vague error.
+
 **New in v34-nightly1** (since stable v33)
 
 - **An in-game menu** (first version): **Esc**, or the controller's
@@ -28,6 +38,7 @@ adventure; try this one in its own folder with a copy of your save.
     Y capitals, Start done).
   - **Playing with friends**: the code to give out, who has joined, and
     Start / Copy the code / Cancel, inside the game.
+
 
 See ROADMAP.md for what's planned.
 

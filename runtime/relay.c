@@ -68,7 +68,8 @@ static void rand_bytes(uint8_t* b, size_t n) {
 }
 #endif
 
-enum { RM_OPEN = 0, RM_DATA = 1, RM_CLOSE = 2, RM_OK = 3, RM_ERROR = 4, RM_KEEP = 5 };
+enum { RM_OPEN = 0, RM_DATA = 1, RM_CLOSE = 2, RM_OK = 3, RM_ERROR = 4, RM_KEEP = 5,
+       RM_MULTI = 6 };   /* host -> relay: every friend's bytes in one message ([id, len lo, len hi, bytes]...): the relay counts each message it gets */
 #define COALESCE_MS 30         /* gather a connection's bytes this long before sending (fewer relay messages) */
 #define KEEPALIVE_MS 25000
 
@@ -337,6 +338,7 @@ static struct {
     mutex_t mx;
     volatile int broken;
     double last_sent;
+    int multi;                    /* the relay takes RM_MULTI (it said so in its RM_OK) */
 } R;
 
 int relay_broken(void) { return R.broken; }
@@ -354,6 +356,30 @@ static void flush(Conn* c) {
     if (!c->len) return;
     send_msg(RM_DATA, c->remote, c->buf, c->len);
     c->len = 0;
+}
+/* host: everything waiting for every friend, in one message (fewer messages: the
+ * relay's daily allowance lasts longer; nothing waits longer than before) */
+static void flush_all_host(void) {
+    size_t total = 0; int n = 0;
+    for (int i = 0; i < MAXC; i++) if (R.c[i].s != BADSOCK && R.c[i].len) { total += 3 * ((R.c[i].len + 65534) / 65535) + R.c[i].len; n++; }
+    if (!n) return;
+    if (n == 1) { for (int i = 0; i < MAXC; i++) if (R.c[i].s != BADSOCK && R.c[i].len) flush(&R.c[i]); return; }
+    uint8_t* m = malloc(total + 2), *p = m + 2;
+    m[0] = RM_MULTI; m[1] = 0;
+    for (int i = 0; i < MAXC; i++) {
+        Conn* c = &R.c[i];
+        if (c->s == BADSOCK || !c->len) continue;
+        size_t left = c->len; const uint8_t* d = c->buf;
+        while (left) {                                            /* (pieces of at most 64 KB) */
+            size_t k = left > 65535 ? 65535 : left;
+            *p++ = (uint8_t)c->remote; *p++ = (uint8_t)(k & 255); *p++ = (uint8_t)(k >> 8);
+            memcpy(p, d, k); p += k; d += k; left -= k;
+        }
+        c->len = 0;
+    }
+    if (R.ws && !ws_send(R.ws, m, (size_t)(p - m))) R.broken = 1;
+    R.last_sent = now_ms();
+    free(m);
 }
 
 static void conn_drop(int i) {
@@ -419,7 +445,7 @@ static THREAD_RET pump_thread(void* u) {
             Conn* c = &R.c[i];
             if (c->s == BADSOCK) continue;
             if (c->closing) { flush(c); conn_drop(i); continue; }
-            if (c->len && now - c->first >= COALESCE_MS) flush(c);
+            if (c->len && now - c->first >= COALESCE_MS) { if (R.host && R.multi) flush_all_host(); else flush(c); }
             if (c->len) { double left = COALESCE_MS - (now - c->first); if (left < wait) wait = left; }
             FD_SET(c->s, &rd); if (c->s > top) top = c->s; any = 1;
         }
@@ -454,7 +480,7 @@ static THREAD_RET pump_thread(void* u) {
             }
             if (!c->len) c->first = now_ms();
             c->len += (size_t)n;
-            if (c->len >= 8192) flush(c);
+            if (c->len >= 8192) { if (R.host && R.multi) flush_all_host(); else flush(c); }
         }
         mx_unlock(&R.mx);
     }
@@ -476,9 +502,10 @@ static int begin(const char* code, int host, char* why, size_t wn, int* id) {
     if (n >= 2 && m[0] == RM_ERROR) { snprintf(why, wn, "%.*s", (int)(n - 2), (const char*)m + 2); free(m); ws_close(w); free(w); return 0; }
     if (n < 2 || m[0] != RM_OK) { snprintf(why, wn, "the relay answered something unexpected"); free(m); ws_close(w); free(w); return 0; }
     *id = m[1];
+    R.multi = n >= 3 && m[2] >= 1;                                 /* (a relay from before v34 sends no version) */
     free(m);
     R.ws = w; R.host = host; R.broken = 0; R.last_sent = now_ms();
-    rlog("relay: connected as %s in %.1f s (%s)", host ? "the host" : "a friend", (now_ms() - t0) / 1000.0, base);
+    rlog("relay: connected as %s in %.1f s (%s)%s", host ? "the host" : "a friend", (now_ms() - t0) / 1000.0, base, R.multi ? ", bundled" : "");
     return 1;
 }
 
