@@ -1,0 +1,354 @@
+# Learned spells and abilities, from eidako2's "Hacking/Modding Memory Map (US)" on GameFAQs,
+# checked against the ROM's skilltable.bin / spelltable.bin / sklname.gp2.
+# Each party record (0x020F3888 + slot*0x964) has learned abilities at +0x8B0 (36 bytes)
+# and learned spells at +0x8D4 (9 bytes). Lines: BYTE:MASK text. Bits marked ? or (void) are left out.
+
+[abilities]
+00:01 sword 3 - dragon slash
+00:02 sword 7 - attack +10
+00:04 sword 13 - metal slash
+00:08 sword 22 - crit hit rate up
+00:10 sword 35 - miracle slash
+00:20 sword 42 - attack +20
+00:40 sword 58 - falcon slash
+00:80 sword 76 - attack +30
+01:01 sword 88 - gigaslash
+01:02 sword 100 - omnivocational
+01:04 sword - gigagash
+01:08 spear 7 - attack +10
+01:10 spear 3 - mercurial thrust
+01:20 spear 35 - crit hit rate up
+01:40 spear 13 - cattle prod
+01:80 spear 42 - attack +20
+02:01 spear 22 - pressure pointer
+02:02 spear 76 - attack +30
+02:04 spear 58 - thunder thrust
+02:08 spear 88 - multithrust
+02:10 spear 100 - omnivocational
+02:20 spear - lightning storm
+02:40 knife 3 - toxic dagger
+02:80 knife 7 - attack +10
+03:01 knife 13 - fly swat
+03:02 knife 42 - attack +20
+03:04 knife 35 - victimiser
+03:08 knife 22 - crit hit rate up
+03:10 knife 58 - assassin's stab
+03:20 knife 76 - attack +30
+03:40 knife 88 - hp hoover
+03:80 knife 100 - omnivocational
+04:01 knife - persecutter
+04:02 shield 6 - blockenspiel
+04:04 shield 12 - block chance +2%
+04:08 shield 18 - defending champion
+04:10 shield 25 - block chance +2%
+04:20 shield 32 - immense defence
+04:40 shield 52 - block chance +2%
+04:80 shield 40 - magic mirror
+05:01 shield - critical hit guard
+05:02 shield 82 - back atcha
+05:04 shield 100 - omnivocational
+05:08 shield 66 - holy impregnable
+05:10 courage 8 - whipping boy
+05:20 courage 16 - strength +10
+05:40 courage 28 - whistle
+05:80 courage 40 - resilience +20
+06:01 courage 48 - body slam
+06:02 courage 56 - strength +30
+06:04 courage 70 - morale masher
+06:08 courage 80 - resilience +40
+06:10 courage 90 - hp +60
+06:20 courage 100 - attack attacker
+06:80 wand 3 - mp +10
+07:01 wand 7 - antimagic
+07:02 wand 13 - mp absorption +2%
+07:04 wand 21 - beelzefreeze
+07:08 wand 31 - mp +30
+07:10 wand 44 - caduceus
+07:20 wand 57 - mp absorption +4%
+07:40 wand 70 - mp +60
+07:80 wand 84 - auto mp recovery
+08:01 wand 100 - omnivocational
+08:02 wand - zing stick
+08:04 staff 3 - attack +10
+08:08 staff 7 - trip of a deathtime
+08:10 staff 35 - attack +20
+08:20 staff 22 - deliverance
+08:40 staff 13 - crit hit rate up
+08:80 staff 42 - party pooper
+09:01 staff 58 - evasion chance +4%
+09:02 staff 76 - crushed ice
+09:04 staff 88 - attack +30
+09:08 staff 100 - omnivocational
+09:20 faith 8 - divination
+09:40 faith 16 - magic mending +20
+09:80 faith 28 - benediction
+0A:01 faith 40 - mp +10
+0A:02 faith 48 - rotstopper
+0A:04 faith 56 - magic mending +60
+0A:08 faith 70 - alma mater
+0A:10 faith 80 - mp +20
+0A:20 faith 90 - care prayer
+0A:40 faith 100 - magic mending +100
+0B:01 whip 3 - hypnowhip
+0B:02 whip 13 - attack +10
+0B:04 whip 7 - lashings of love
+0B:08 whip 35 - attack +20
+0B:10 whip 42 - hit the hay
+0B:20 whip 58 - attack +30
+0B:40 whip 22 - trammel lash
+0B:80 whip 76 - schadenfreude
+0C:01 whip 88 - twin dragon lash
+0C:02 whip 100 - omnivocational
+0C:08 spellcraft 18 - magic might +20
+0C:10 spellcraft 26 - spooky aura
+0C:20 spellcraft 38 - mp +10
+0C:40 spellcraft 8 - wizard ward
+0C:80 spellcraft 54 - critical spell rate up
+0D:01 spellcraft 46 - focus pocus
+0D:02 spellcraft 88 - mp +20
+0D:04 spellcraft 68 - channel anger
+0D:08 spellcraft 78 - magic might +60
+0D:10 spellcraft 100 - magic might +100
+0D:40 claw 3 - propeller blade
+0D:80 claw 7 - attack +10
+0E:01 claw 13 - can opener
+0E:02 claw 22 - crit hit rate up
+0E:04 claw 35 - flailing nails
+0E:08 claw 42 - attack +20
+0E:10 claw 58 - hardclaw
+0E:20 claw 76 - attack +30
+0E:40 claw 88 - rake 'n' break
+0E:80 claw 100 - omnivocational
+0F:02 fan 7 - attack +10
+0F:04 fan 3 - flower power
+0F:08 fan 42 - attack +20
+0F:10 fan 13 - reverse cycle
+0F:20 fan 22 - crit hit rate up
+0F:40 fan 35 - water slaughterer
+0F:80 fan 76 - attack +30
+10:01 fan 58 - schizofanic
+10:02 fan 88 - fan dango
+10:04 fan 100 - omnivocational
+10:10 fisticuffs 7 - attack +10
+10:20 fisticuffs 3 - stone's throw
+10:40 fisticuffs 18 - crit hit rate up
+10:80 fisticuffs 12 - wind sickles
+11:01 fisticuffs 30 - evasion chance +4%
+11:02 fisticuffs 25 - knuckle sandwich
+11:04 fisticuffs 60 - attack +30
+11:08 fisticuffs 42 - multifists
+11:10 fisticuffs 77 - boulder toss
+11:20 fisticuffs 100 - attack +60
+11:80 focus 4 - war cry
+12:01 focus 10 - agility +10
+12:02 focus 16 - psyche up
+12:04 focus 22 - strength +10
+12:08 focus 32 - mens sana
+12:10 focus 42 - hp +30
+12:20 focus 55 - mind over matter
+12:40 focus 68 - agility +30
+12:80 focus 82 - meditation
+13:01 focus 100 - agility +60
+13:04 acquisitiveness 4 - deftness +20
+13:08 acquisitiveness 10 - half-inch
+13:10 acquisitiveness 16 - agility +20
+13:20 acquisitiveness 22 - pitfall
+13:40 acquisitiveness 32 - hp +20
+13:80 acquisitiveness 42 - nose for treasure
+14:01 acquisitiveness 55 - deftness +40
+14:02 acquisitiveness 68 - eye for trouble
+14:04 acquisitiveness 82 - agility +40
+14:08 acquisitiveness 100 - treasure eye land
+14:20 litheness 4 - hot lick
+14:40 litheness 10 - spry in a crisis
+14:80 litheness 16 - pratfall
+15:01 litheness 22 - charm +30
+15:02 litheness 32 - sobering slap
+15:04 litheness 42 - magic might +30
+15:08 litheness 55 - tap dance
+15:10 litheness 68 - magic mending +30
+15:20 litheness 82 - have a ball
+15:40 litheness 100 - deftness +50
+16:01 axe 35 - helm splitter
+16:02 axe 7 - attack +10
+16:04 axe 3 - poplar toppler
+16:08 axe 42 - attack +20
+16:10 axe 13 - parallax
+16:20 axe 22 - crit hit rate up
+16:40 axe 58 - hatchet man
+16:80 axe 76 - attack +30
+17:01 axe 88 - axes of evil
+17:02 axe 100 - omnivocational
+17:08 hammer 7 - attack +10
+17:10 hammer 3 - heart breaker
+17:20 hammer 22 - crit hit rate up
+17:40 hammer 13 - penny pincher
+17:80 hammer 42 - attack +20
+18:01 hammer 35 - bagsy last
+18:02 hammer 76 - attack +30
+18:04 hammer 58 - monster masher
+18:08 hammer 88 - crackerwhack
+18:10 hammer 100 - omnivocational
+18:40 guts 4 - hp +10
+18:80 guts 10 - clap trap
+19:01 guts 16 - strength +10
+19:02 guts 22 - double up
+19:04 guts 32 - hp +20
+19:08 guts 68 - blind man's biff
+19:10 guts 55 - strength +30
+19:20 guts 42 - double-edged slash
+19:40 guts 82 - hp +30
+19:80 guts 100 - feel the burn
+1A:02 bow 7 - attack +10
+1A:04 bow 3 - conjury conductor
+1A:08 bow 42 - attack +20
+1A:10 bow 13 - flutter disaster
+1A:20 bow 22 - crit hit rate up
+1A:40 bow 35 - needle shot
+1A:80 bow 76 - attack +30
+1B:01 bow 58 - rain of pain
+1B:02 bow 88 - hallowed arrow
+1B:04 bow 100 - omnivocational
+1B:10 fource 4 - fire fource
+1B:20 fource 10 - strength +10
+1B:40 fource 16 - frost fource
+1B:80 fource 22 - resilience +20
+1C:01 fource 32 - gale fource
+1C:02 fource 42 - charm +10
+1C:04 fource 55 - funereal fource
+1C:08 fource 68 - magic might +30
+1C:10 fource 82 - life fource
+1C:20 fource 100 - hp +30
+1C:80 virtue 4 - pincushion
+1D:01 virtue 10 - resilience +10
+1D:02 virtue 16 - h-pathy
+1D:04 virtue 22 - magic mending +30
+1D:08 virtue 32 - m-pathy
+1D:10 virtue 42 - resilience +30
+1D:20 virtue 55 - selflessness
+1D:40 virtue 68 - resilience +60
+1D:80 virtue 82 - forbearance
+1E:01 virtue 100 - hp +80
+1E:04 boomerang 3 - crosscutter throw
+1E:08 boomerang 13 - attack +10
+1E:10 boomerang 7 - power throw
+1E:20 boomerang 35 - attack +20
+1E:40 boomerang 22 - ooze bruiser
+1E:80 boomerang 76 - attack +30
+1F:01 boomerang 42 - starburst throw
+1F:02 boomerang 58 - firebird throw
+1F:04 boomerang 88 - metalicker
+1F:08 boomerang 100 - omnivocational
+1F:20 enlightenment 4 - magic mending +20
+1F:40 enlightenment 10 - jack's knack
+1F:80 enlightenment 16 - magic might +20
+20:01 enlightenment 22 - right as rain
+20:02 enlightenment 32 - magic mending +40
+20:04 enlightenment 42 - disruptive wave
+20:08 enlightenment 55 - magic might +40
+20:10 enlightenment 68 - caster sugar
+20:20 enlightenment 82 - mp +60
+20:40 enlightenment 100 - mp consumption -25%
+21:01 je ne sais quoi 4 - charm +10
+21:02 je ne sais quoi 10 - autograph
+21:04 je ne sais quoi 16 - agility +20
+21:08 je ne sais quoi 22 - scandal eyes
+21:10 je ne sais quoi 32 - hp +20
+21:20 je ne sais quoi 42 - extreme makeover
+21:40 je ne sais quoi 55 - charm +20
+21:80 je ne sais quoi 68 - eyes on me
+22:01 je ne sais quoi 82 - charm +30
+22:02 je ne sais quoi 100 - disco stew
+22:08 ruggedness 16 - mercy
+22:10 ruggedness 10 - deftness +10
+22:20 ruggedness 4 - soothe sayer
+22:40 ruggedness 22 - agility +20
+22:80 ruggedness 32 - vanish
+23:01 ruggedness 42 - resilience +20
+23:02 ruggedness 55 - mist me
+23:04 ruggedness 68 - deftness +30
+23:08 ruggedness 82 - wolf whistle
+23:10 ruggedness 100 - deftness +60
+23:40 hero - egg on
+
+# special abilities no skill tree teaches (0 points in data/prm/skilltable.bin); the game learns and
+# forgets them by equipment (ov026_021dc8fc). Names from data/prm/sklname.gp2.
+09:10 staff - counter wait
+0C:04 whip - serpent's bite
+0F:01 claw - hand of god
+10:08 fan - hustle dance
+17:04 axe - whopper chop
+18:20 hammer - big banga
+1B:08 bow - shining shot
+1F:10 boomerang - gigathrow
+11:40 fisticuffs - miracle moon
+0A:80 faith - wave of relief
+0D:20 spellcraft - weakening wave
+15:80 litheness - gritty ditty
+1E:02 virtue - solar flair
+20:80 enlightenment - twocus pocus
+22:04 je ne sais quoi - gold rush
+
+[spells]
+00:01 attack - frizz
+00:02 attack - frizzle
+00:04 attack - kafrizz
+00:08 attack - kafrizzle
+00:10 attack - crack
+00:20 attack - crackle
+00:40 attack - kacrack
+00:80 attack - kacrackle
+01:01 attack - zap
+01:02 attack - zapple
+01:04 attack - kazap
+01:08 attack - kazapple
+01:10 attack - woosh
+01:20 attack - swoosh
+01:40 attack - kaswoosh
+01:80 attack - kaswooshle
+02:01 attack - bang
+02:02 attack - boom
+02:04 attack - kaboom
+02:08 attack - kaboomle
+02:10 attack - whack
+02:20 attack - thwack
+02:40 attack - kathwack
+02:80 attack - kamikazee
+03:01 attack - magic burst
+03:04 healing - heal
+03:08 healing - midheal
+03:10 healing - moreheal
+03:20 healing - fullheal
+03:40 healing - multiheal
+03:80 healing - omniheal
+04:01 healing - squelch
+04:02 healing - tingle
+04:04 healing - cock-a-doodle-doo
+04:08 healing - zing
+04:10 healing - kazing
+04:20 support - kerplunk
+04:40 support - buff
+04:80 support - kabuff
+05:01 support - sap
+05:02 support - kasap
+05:04 support - accelerate
+05:08 support - acceleratle
+05:10 support - decelerate
+05:20 support - deceleratle
+05:40 support - oomph
+05:80 support - blunt
+06:01 support - fuddle
+06:02 support - kafuddle
+06:04 support - snooze
+06:08 support - kasnooze
+06:10 support - bounce
+06:20 support - spell checker
+06:40 support - magic barrier
+06:80 support - fizzle
+07:01 support - dazzle
+07:02 support - insulate
+07:04 support - insulatle
+07:08 support - divine intervention
+07:10 field - zoom
+07:80 field - evac
+08:01 field - safe passage
