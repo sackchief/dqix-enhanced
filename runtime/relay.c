@@ -2,9 +2,9 @@
  * between it and ordinary TCP connections on this PC.
  *
  * The WebSocket: on Windows, https:// goes through WinHTTP (TLS, proxies);
- * elsewhere through a small client of our own over OpenSSL (built with
- * DQIX_TLS, see build.mk; certificates and the host name are checked).
- * http:// (local tests) goes through the same client without TLS, on every system.
+ * elsewhere through a small client of our own, with TLS from relay_tls.c
+ * (OpenSSL, if the build has it). http:// (local tests) goes through the same
+ * client without TLS, on every system.
  * Every message is [type, id, data...] (tools/relay/worker.js). */
 #ifdef _WIN32
 #undef _WIN32_WINNT
@@ -19,12 +19,7 @@
 #include <time.h>
 #include "relay.h"
 #include "relay_url.h"
-#if !defined(_WIN32) && defined(DQIX_TLS)
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/x509v3.h>
-#include <poll.h>
-#endif
+#include "relay_tls.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -124,10 +119,7 @@ typedef struct {
     HINTERNET ses, con, ws;            /* WinHTTP (https) */
 #endif
     sock_t s;                          /* our own client (http, or https with OpenSSL) */
-#if !defined(_WIN32) && defined(DQIX_TLS)
-    SSL* ssl;                          /* https: one thread at a time in it (ssl_mx); the socket is non-blocking */
-    mutex_t ssl_mx;
-#endif
+    TlsConn* tls;                      /* https: the bytes go through it */
     mutex_t send_mx;
     uint8_t* rbuf; size_t rlen, rcap;  /* our client: bytes read, not yet a frame */
 } Ws;
@@ -139,37 +131,11 @@ static int send_all(sock_t s, const void* d, size_t n) {
 }
 
 /* the WebSocket's bytes: straight on the socket, or through TLS */
-#if !defined(_WIN32) && defined(DQIX_TLS)
-static int tls_io(Ws* w, void* buf, size_t n, int write) {
-    double t0 = now_ms();
-    for (;;) {
-        mx_lock(&w->ssl_mx);
-        int k = write ? SSL_write(w->ssl, buf, (int)n) : SSL_read(w->ssl, buf, (int)n);
-        int e = k > 0 ? 0 : SSL_get_error(w->ssl, k);
-        mx_unlock(&w->ssl_mx);
-        if (k > 0) return k;
-        if (e != SSL_ERROR_WANT_READ && e != SSL_ERROR_WANT_WRITE) return 0;
-        if (write && now_ms() - t0 > 15000) return 0;          /* a peer that stopped listening */
-        struct pollfd p = { w->s, (short)(e == SSL_ERROR_WANT_WRITE ? POLLOUT : POLLIN), 0 };
-        poll(&p, 1, 100);                                      /* reading waits as long as it takes (a lobby can be quiet) */
-    }
-}
-#endif
 static int ws_wr(Ws* w, const void* d, size_t n) {
-#if !defined(_WIN32) && defined(DQIX_TLS)
-    if (w->ssl) {
-        const char* p = (const char*)d;
-        while (n) { int k = tls_io(w, (void*)p, n > 16384 ? 16384 : n, 1); if (k <= 0) return 0; p += k; n -= (size_t)k; }
-        return 1;
-    }
-#endif
-    return send_all(w->s, d, n);
+    return w->tls ? tls_write(w->tls, d, n) : send_all(w->s, d, n);
 }
 static int ws_rd_some(Ws* w, void* d, size_t n) {              /* 1..n bytes, or <= 0 */
-#if !defined(_WIN32) && defined(DQIX_TLS)
-    if (w->ssl) return tls_io(w, d, n, 0);
-#endif
-    return (int)recv(w->s, (char*)d, (int)n, 0);
+    return w->tls ? tls_read(w->tls, d, n) : (int)recv(w->s, (char*)d, (int)n, 0);
 }
 static int ws_rd(Ws* w, void* d, size_t n) {                   /* exactly n bytes */
     char* p = (char*)d;
@@ -222,50 +188,8 @@ static sock_t tcp_connect(const char* host, int port, char* why, size_t wn) {
     return s;
 }
 
-#if !defined(_WIN32) && defined(DQIX_TLS)
-static SSL_CTX* tls_ctx(char* why, size_t wn) {
-    static SSL_CTX* ctx;
-    if (ctx) return ctx;
-    ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) { snprintf(why, wn, "TLS isn't available (OpenSSL)"); return NULL; }
-    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-    if (SSL_CTX_set_default_verify_paths(ctx) != 1) { snprintf(why, wn, "this system's certificates can't be found"); SSL_CTX_free(ctx); ctx = NULL; return NULL; }
-    return ctx;
-}
-/* TLS over the connected socket, checking the relay's certificate and its name */
-static int tls_start(Ws* w, const char* host, char* why, size_t wn) {
-    SSL_CTX* ctx = tls_ctx(why, wn);
-    if (!ctx) return 0;
-    w->ssl = SSL_new(ctx);
-    if (!w->ssl) { snprintf(why, wn, "TLS couldn't start"); return 0; }
-    unsigned char ip[16];
-    int is_ip = inet_pton(AF_INET, host, ip) == 1 || inet_pton(AF_INET6, host, ip) == 1;
-    if (is_ip) X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(w->ssl), host);
-    else { SSL_set_tlsext_host_name(w->ssl, host); SSL_set1_host(w->ssl, host); }
-    SSL_set_fd(w->ssl, (int)w->s);
-    struct timeval tv = { 10, 0 };                               /* the handshake: blocking, but not forever */
-    setsockopt(w->s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(w->s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    if (SSL_connect(w->ssl) != 1) {
-        long v = SSL_get_verify_result(w->ssl);
-        if (v != X509_V_OK) snprintf(why, wn, "the relay's certificate isn't trusted (%s)", X509_verify_cert_error_string(v));
-        else snprintf(why, wn, "the secure connection to the relay failed (TLS)");
-        return 0;
-    }
-    memset(&tv, 0, sizeof tv);
-    setsockopt(w->s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(w->s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    fcntl(w->s, F_SETFL, fcntl(w->s, F_GETFL, 0) | O_NONBLOCK);  /* from here tls_io waits with poll, so reads don't block writes */
-    mx_init(&w->ssl_mx);
-    return 1;
-}
-#endif
-
 static void ws_destroy(Ws* w) {
-#if !defined(_WIN32) && defined(DQIX_TLS)
-    if (w->ssl) SSL_free(w->ssl);
-#endif
+    if (w->tls) tls_free(w->tls);
     free(w);
 }
 
@@ -274,11 +198,7 @@ static Ws* ws_open_sock(const char* host, int port, const char* path, int secure
     if (s == BADSOCK) return NULL;
     Ws* w = calloc(1, sizeof *w);
     w->s = s; mx_init(&w->send_mx);
-#if !defined(_WIN32) && defined(DQIX_TLS)
-    if (secure && !tls_start(w, host, why, wn)) { closesock(s); ws_destroy(w); return NULL; }
-#else
-    (void)secure;
-#endif
+    if (secure && !(w->tls = tls_connect((int)s, host, why, wn))) { closesock(s); ws_destroy(w); return NULL; }
     uint8_t key[16]; rand_bytes(key, 16); char k64[32]; b64(key, 16, k64);
     char req[1024];
     int n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s", path, host);
@@ -342,8 +262,6 @@ static Ws* ws_open(const char* url, char* why, size_t wn) {
     if (!parse_url(url, &secure, host, sizeof host, &port, path, sizeof path)) { snprintf(why, wn, "the relay's address isn't right (%s)", url); return NULL; }
 #ifdef _WIN32
     if (secure) return ws_open_winhttp(host, port, path, why, wn);
-#elif !defined(DQIX_TLS)
-    if (secure) { snprintf(why, wn, "the relay needs TLS, which this build doesn't have (it was built without OpenSSL)"); return NULL; }
 #endif
     return ws_open_sock(host, port, path, secure, why, wn);
 }

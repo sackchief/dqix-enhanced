@@ -6,7 +6,7 @@
 set -e
 cd "$(dirname "$0")"; R=../../runtime
 W=${TMPDIR:-/tmp}/relay_tls.$$; mkdir -p $W; trap 'kill $SRV 2>/dev/null || true; rm -rf $W' EXIT
-gcc -O1 -Wall -DDQIX_TLS -I$R harness.c $R/relay.c -o $W/h $(pkg-config --cflags --libs openssl) -lpthread
+gcc -O1 -Wall -DDQIX_TLS -I$R harness.c $R/relay.c $R/relay_tls.c -o $W/h $(pkg-config --cflags --libs openssl) -lpthread
 mkcert() {  # name file
     openssl req -x509 -newkey rsa:2048 -nodes -keyout $W/$2.key -out $W/$2.pem -days 2 -subj "/CN=$1" -addext "subjectAltName=DNS:$1" 2>/dev/null
 }
