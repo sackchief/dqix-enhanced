@@ -28,6 +28,15 @@ ifeq ($(OS),Windows_NT)
 NET_LIBS = -lws2_32 -liphlpapi -lgdi32 -lwinhttp -lcomdlg32
 endif
 NET_LIBS ?=
+# The relay's https (friends far away, joining with a code) needs TLS: WinHTTP on Windows,
+# OpenSSL elsewhere. TLS=0 builds without it; the relay is then only reachable over http.
+ifneq ($(OS),Windows_NT)
+TLS ?= $(shell pkg-config --exists openssl 2>/dev/null && echo 1)
+ifeq ($(TLS),1)
+NET_LIBS += $(shell pkg-config --libs openssl)
+TLS_DEFS = -DDQIX_TLS $(shell pkg-config --cflags openssl)
+endif
+endif
 
 GENOBJ = $(patsubst $(GEN)/%.c,$(OBJ)/gen/%.o,$(wildcard $(GEN)/*.c))
 GEN7OBJ = $(patsubst $(GEN7)/%.c,$(OBJ)/gen7/%.o,$(wildcard $(GEN7)/*.c))
@@ -98,7 +107,9 @@ $(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.
 
 # Sessions need every PC to compute exactly the same: no stack garbage in uninitialised variables.
 DETERMINISM ?= -ftrivial-auto-var-init=zero
-$(OBJ)/rt/relay.o: runtime/relay.h runtime/relay_url.h
+$(OBJ)/rt/relay.o: runtime/relay.h runtime/relay_url.h runtime/relay_tls.h
+$(OBJ)/rt/relay_tls.o: runtime/relay_tls.h
+$(OBJ)/rt/relay_tls.o: override DEFS += $(TLS_DEFS)
 $(OBJ)/rt/music.o: runtime/stb_vorbis.h runtime/dr_flac.h runtime/music.h
 $(OBJ)/rt/%.o: runtime/%.c runtime/nds.h runtime/cpu.h runtime/coro.h runtime/frontend.h runtime/version.h runtime/air.h runtime/session.h
 	@mkdir -p $(dir $@)

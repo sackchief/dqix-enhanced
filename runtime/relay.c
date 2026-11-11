@@ -2,7 +2,9 @@
  * between it and ordinary TCP connections on this PC.
  *
  * The WebSocket: on Windows, https:// goes through WinHTTP (TLS, proxies);
- * http:// (local tests) through a small client of our own, on every system.
+ * elsewhere through a small client of our own, with TLS from relay_tls.c
+ * (OpenSSL, if the build has it). http:// (local tests) goes through the same
+ * client without TLS, on every system.
  * Every message is [type, id, data...] (tools/relay/worker.js). */
 #ifdef _WIN32
 #undef _WIN32_WINNT
@@ -17,6 +19,7 @@
 #include <time.h>
 #include "relay.h"
 #include "relay_url.h"
+#include "relay_tls.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -115,7 +118,8 @@ typedef struct {
 #ifdef _WIN32
     HINTERNET ses, con, ws;            /* WinHTTP (https) */
 #endif
-    sock_t s;                          /* our own client (http) */
+    sock_t s;                          /* our own client (http, or https with OpenSSL) */
+    TlsConn* tls;                      /* https: the bytes go through it */
     mutex_t send_mx;
     uint8_t* rbuf; size_t rlen, rcap;  /* our client: bytes read, not yet a frame */
 } Ws;
@@ -123,6 +127,19 @@ typedef struct {
 static int send_all(sock_t s, const void* d, size_t n) {
     const char* p = (const char*)d;
     while (n) { int k = send(s, p, (int)(n > 65536 ? 65536 : n), 0); if (k <= 0) return 0; p += k; n -= (size_t)k; }
+    return 1;
+}
+
+/* the WebSocket's bytes: straight on the socket, or through TLS */
+static int ws_wr(Ws* w, const void* d, size_t n) {
+    return w->tls ? tls_write(w->tls, d, n) : send_all(w->s, d, n);
+}
+static int ws_rd_some(Ws* w, void* d, size_t n) {              /* 1..n bytes, or <= 0 */
+    return w->tls ? tls_read(w->tls, d, n) : (int)recv(w->s, (char*)d, (int)n, 0);
+}
+static int ws_rd(Ws* w, void* d, size_t n) {                   /* exactly n bytes */
+    char* p = (char*)d;
+    while (n) { int k = ws_rd_some(w, p, n); if (k <= 0) return 0; p += k; n -= (size_t)k; }
     return 1;
 }
 
@@ -171,28 +188,35 @@ static sock_t tcp_connect(const char* host, int port, char* why, size_t wn) {
     return s;
 }
 
-static Ws* ws_open_plain(const char* host, int port, const char* path, char* why, size_t wn) {
+static void ws_destroy(Ws* w) {
+    if (w->tls) tls_free(w->tls);
+    free(w);
+}
+
+static Ws* ws_open_sock(const char* host, int port, const char* path, int secure, char* why, size_t wn) {
     sock_t s = tcp_connect(host, port, why, wn);
     if (s == BADSOCK) return NULL;
+    Ws* w = calloc(1, sizeof *w);
+    w->s = s; mx_init(&w->send_mx);
+    if (secure && !(w->tls = tls_connect((int)s, host, why, wn))) { closesock(s); ws_destroy(w); return NULL; }
     uint8_t key[16]; rand_bytes(key, 16); char k64[32]; b64(key, 16, k64);
     char req[1024];
-    int n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                     "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nUser-Agent: DQIX-Enhanced\r\n\r\n", path, host, port, k64);
-    if (!send_all(s, req, (size_t)n)) { closesock(s); snprintf(why, wn, "the relay closed the connection"); return NULL; }
+    int n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s", path, host);
+    if (!(secure && port == 443)) n += snprintf(req + n, sizeof req - (size_t)n, ":%d", port);
+    n += snprintf(req + n, sizeof req - (size_t)n, "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                  "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nUser-Agent: DQIX-Enhanced\r\n\r\n", k64);
+    if (!ws_wr(w, req, (size_t)n)) { closesock(s); ws_destroy(w); snprintf(why, wn, "the relay closed the connection"); return NULL; }
     char head[4096]; int hl = 0;
     while (hl < (int)sizeof head - 1) {
-        int k = recv(s, head + hl, 1, 0);
-        if (k <= 0) { closesock(s); snprintf(why, wn, "the relay closed the connection"); return NULL; }
+        if (!ws_rd(w, head + hl, 1)) { closesock(s); ws_destroy(w); snprintf(why, wn, "the relay closed the connection"); return NULL; }
         hl++;
         if (hl >= 4 && !memcmp(head + hl - 4, "\r\n\r\n", 4)) break;
     }
     head[hl] = 0;
     if (strncmp(head, "HTTP/1.1 101", 12)) {
         char* e = strchr(head, '\r'); if (e) *e = 0;
-        snprintf(why, wn, "the relay answered \"%.60s\"", head); closesock(s); return NULL;
+        snprintf(why, wn, "the relay answered \"%.60s\"", head); closesock(s); ws_destroy(w); return NULL;
     }
-    Ws* w = calloc(1, sizeof *w);
-    w->s = s; mx_init(&w->send_mx);
     return w;
 }
 
@@ -238,10 +262,8 @@ static Ws* ws_open(const char* url, char* why, size_t wn) {
     if (!parse_url(url, &secure, host, sizeof host, &port, path, sizeof path)) { snprintf(why, wn, "the relay's address isn't right (%s)", url); return NULL; }
 #ifdef _WIN32
     if (secure) return ws_open_winhttp(host, port, path, why, wn);
-#else
-    if (secure) { snprintf(why, wn, "the relay needs TLS, which this build only has on Windows"); return NULL; }
 #endif
-    return ws_open_plain(host, port, path, why, wn);
+    return ws_open_sock(host, port, path, secure, why, wn);
 }
 
 static int ws_send(Ws* w, const uint8_t* d, size_t n) {
@@ -258,7 +280,7 @@ static int ws_send(Ws* w, const uint8_t* d, size_t n) {
     uint8_t mask[4]; rand_bytes(mask, 4); memcpy(h + hl, mask, 4); hl += 4;
     uint8_t* m = malloc(n ? n : 1);
     for (size_t i = 0; i < n; i++) m[i] = d[i] ^ mask[i & 3];
-    ok = send_all(w->s, h, (size_t)hl) && send_all(w->s, m, n);
+    ok = ws_wr(w, h, (size_t)hl) && ws_wr(w, m, n);
     free(m);
     mx_unlock(&w->send_mx);
     return ok;
@@ -282,26 +304,26 @@ static int ws_recv(Ws* w, uint8_t** out, size_t* len) {
     uint8_t* msg = NULL; size_t mlen = 0;
     for (;;) {
         uint8_t h[2];
-        if (recv(w->s, (char*)h, 1, MSG_WAITALL) != 1 || recv(w->s, (char*)h + 1, 1, MSG_WAITALL) != 1) { free(msg); return 0; }
+        if (!ws_rd(w, h, 2)) { free(msg); return 0; }
         int op = h[0] & 15, fin = h[0] >> 7;
         uint64_t n = h[1] & 127;
         if (n >= 126) {
             uint8_t e[8]; int k = n == 126 ? 2 : 8;
-            if (recv(w->s, (char*)e, k, MSG_WAITALL) != k) { free(msg); return 0; }
+            if (!ws_rd(w, e, (size_t)k)) { free(msg); return 0; }
             n = 0; for (int i = 0; i < k; i++) n = n << 8 | e[i];
         }
         uint8_t mask[4] = { 0 }; int masked = h[1] >> 7;
-        if (masked && recv(w->s, (char*)mask, 4, MSG_WAITALL) != 4) { free(msg); return 0; }
+        if (masked && !ws_rd(w, mask, 4)) { free(msg); return 0; }
         if (n > (16u << 20)) { free(msg); return 0; }
         uint8_t* p = malloc(n ? (size_t)n : 1);
         size_t got = 0;
-        while (got < n) { int k = recv(w->s, (char*)p + got, (int)(n - got), 0); if (k <= 0) { free(p); free(msg); return 0; } got += (size_t)k; }
+        while (got < n) { int k = ws_rd_some(w, p + got, (size_t)(n - got)); if (k <= 0) { free(p); free(msg); return 0; } got += (size_t)k; }
         if (masked) for (size_t i = 0; i < n; i++) p[i] ^= mask[i & 3];
         if (op == 8) { free(p); free(msg); return 0; }          /* close */
         if (op == 9) {                                         /* ping: pong */
             mx_lock(&w->send_mx);
             uint8_t ph[6] = { 0x8A, 0x80 }; rand_bytes(ph + 2, 4);
-            send_all(w->s, ph, 6);
+            ws_wr(w, ph, 6);
             mx_unlock(&w->send_mx);
             free(p); continue;
         }
@@ -316,7 +338,7 @@ static void ws_close(Ws* w) {
 #ifdef _WIN32
     if (w->ws) { WinHttpWebSocketClose(w->ws, 1000, NULL, 0); WinHttpCloseHandle(w->ws); WinHttpCloseHandle(w->con); WinHttpCloseHandle(w->ses); w->ws = NULL; return; }
 #endif
-    if (w->s != BADSOCK) { uint8_t c[6] = { 0x88, 0x80 }; rand_bytes(c + 2, 4); send_all(w->s, c, 6); closesock(w->s); w->s = BADSOCK; }
+    if (w->s != BADSOCK) { uint8_t c[6] = { 0x88, 0x80 }; rand_bytes(c + 2, 4); ws_wr(w, c, 6); closesock(w->s); w->s = BADSOCK; }
 }
 
 /* ---------------------------------------------------------------- the bridge */
@@ -498,9 +520,9 @@ static int begin(const char* code, int host, char* why, size_t wn, int* id) {
     Ws* w = ws_open(url, why, wn);
     if (!w) { rlog("relay: %s", why); return 0; }
     uint8_t* m; size_t n;
-    if (!ws_recv(w, &m, &n)) { snprintf(why, wn, "the relay closed the connection"); ws_close(w); free(w); return 0; }
-    if (n >= 2 && m[0] == RM_ERROR) { snprintf(why, wn, "%.*s", (int)(n - 2), (const char*)m + 2); free(m); ws_close(w); free(w); return 0; }
-    if (n < 2 || m[0] != RM_OK) { snprintf(why, wn, "the relay answered something unexpected"); free(m); ws_close(w); free(w); return 0; }
+    if (!ws_recv(w, &m, &n)) { snprintf(why, wn, "the relay closed the connection"); ws_close(w); ws_destroy(w); return 0; }
+    if (n >= 2 && m[0] == RM_ERROR) { snprintf(why, wn, "%.*s", (int)(n - 2), (const char*)m + 2); free(m); ws_close(w); ws_destroy(w); return 0; }
+    if (n < 2 || m[0] != RM_OK) { snprintf(why, wn, "the relay answered something unexpected"); free(m); ws_close(w); ws_destroy(w); return 0; }
     *id = m[1];
     R.multi = n >= 3 && m[2] >= 1;                                 /* (a relay from before v34 sends no version) */
     free(m);
