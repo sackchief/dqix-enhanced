@@ -78,7 +78,7 @@ jobs:
       - name: Install AppImage packaging utilities
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libfuse2 rsync squashfs-tools
+          sudo apt-get install --no-install-recommends -y desktop-file-utils libfuse2 rsync squashfs-tools
 
       - name: Set up pinned build environment (cached)
         uses: mamba-org/setup-micromamba@v3
