@@ -59,12 +59,13 @@ jobs:
           clang --version | head -n 1
           python tests/semantics/run.py 2000
 
-      - name: Compile the runtime (SDL frontend and the session core)
+      - name: Compile the runtime (SDL frontend, Mac menu bar and the session core)
         run: |
           set -euo pipefail
           objs=$(ls runtime/*.c | grep -v -E 'stub_runtime|frontend_none' | sed 's#runtime/\(.*\)\.c#build/obj/rt/\1.o#')
           # the core library's frontend, and the network stack
-          objs="$objs build/obj/rt/frontend_none.o $(ls third_party/libslirp/src/*.c | sed 's#third_party/libslirp/\(.*\)\.c#build/obj/slirp/\1.o#') build/obj/slirp/glib/glib.o"
+          # the Mac menu bar (Objective-C)
+          objs="$objs build/obj/rt/menu_macos.o build/obj/rt/frontend_none.o $(ls third_party/libslirp/src/*.c | sed 's#third_party/libslirp/\(.*\)\.c#build/obj/slirp/\1.o#') build/obj/slirp/glib/glib.o"
           make -j"$(sysctl -n hw.ncpu)" -f build.mk OBJ=build/obj FRONTEND=sdl GEN=build/recomp PIC=-fPIC \
             DEFS=-DRECOMP_TRACE $objs
           echo "$(echo $objs | wc -w) objects compiled"

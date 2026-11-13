@@ -1,6 +1,7 @@
-/* The window's menu bar (Windows): every setting in one place. The frontend
+/* The window's menu bar (Windows; macOS: menu_macos.m): every setting in one place. The frontend
  * owns the settings; this file only builds the menu, reports which item was
- * chosen, and shows check marks. Elsewhere the functions do nothing. */
+ * chosen, and shows check marks. Elsewhere the functions do nothing (Linux:
+ * the in-game menu has every setting). */
 #pragma once
 #include "SDL.h"
 #include <stddef.h>

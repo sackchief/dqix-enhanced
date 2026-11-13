@@ -28,6 +28,12 @@ SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS ?= $(shell sdl2-config --libs)
 RT += runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c
 endif
+# macOS: the menu bar in the Mac's own bar (Objective-C)
+ifeq ($(FRONTEND)$(shell uname -s),sdlDarwin)
+MACOBJ = $(OBJ)/rt/menu_macos.o
+SDL_LIBS += -framework Cocoa
+endif
+MACOBJ ?=
 
 # libslirp (user-mode network stack for the wireless emulation, BSD licence)
 SLIRP_SRC = $(wildcard third_party/libslirp/src/*.c) third_party/libslirp/glib/glib.c
@@ -48,7 +54,7 @@ RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(RT))
 # RES: optional extra objects for the program only, e.g. the Windows icon
 # resource the build makes from the ROM (tools/rom_icon.py)
 RES ?=
-$(OUT): $(GENOBJ) $(GEN7OBJ) $(RTOBJ) $(SLIRPOBJ) $(OBJ)/rt/exe_main.o $(RES)
+$(OUT): $(GENOBJ) $(GEN7OBJ) $(RTOBJ) $(MACOBJ) $(SLIRPOBJ) $(OBJ)/rt/exe_main.o $(RES)
 	$(CC) -o $@ $^ $(SDL_LIBS) -lm $(NET_LIBS) $(LDFLAGS)
 
 # The game as a library (CORE=dqixcore.dll / dqixcore.so): in a session the
@@ -98,6 +104,10 @@ $(OBJ)/rt/discord.o: runtime/discord.c runtime/discord.h
 $(OBJ)/rt/menu_win32.o: runtime/menu_win32.c runtime/menu.h runtime/controls.h
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+
+$(OBJ)/rt/menu_macos.o: runtime/menu_macos.m runtime/menu.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -Wall -Wno-unused-parameter -fobjc-arc $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/menu_items.o: runtime/menu_items.c runtime/menu.h
 	@mkdir -p $(dir $@)

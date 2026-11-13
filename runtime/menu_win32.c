@@ -1,4 +1,4 @@
-/* Menu bar for the game window on Windows (see menu.h). */
+/* Menu bar for the game window on Windows (see menu.h). macOS: menu_macos.m. */
 #include "menu.h"
 #include "controls.h"
 
@@ -736,19 +736,25 @@ int choice_box(SDL_Window* win, const char* title, const char* text, const char*
                const char* check, int* checked) { (void)win; (void)title; (void)text; (void)buttons; (void)n; (void)def; (void)cancel; (void)check; (void)checked; return -1; }
 char* ask_text(SDL_Window* win, const char* title, const char* prompt) { (void)win; (void)title; (void)prompt; return NULL; }
 float display_mm_per_pixel(SDL_Window* win) { (void)win; return 0; }
+#ifndef __APPLE__                                                /* macOS: menu_macos.m */
 void menu_init(SDL_Window* win, const char* const* shell_names, int n_shells) { (void)win; (void)shell_names; (void)n_shells; }
+#endif
 void menu_show(int on) { (void)on; }
 void menu_strip(int on) { (void)on; }
 int menu_strip_shown(void) { return 0; }
 void window_fix_frame(SDL_Window* win) { (void)win; }
 int clipboard_set_file(const char* path) { (void)path; return 0; }
+#ifndef __APPLE__
 int file_dialog(SDL_Window* win, int save, const char* title, const char* filter, const char* default_name, char* out, size_t n) {
     (void)win; (void)save; (void)title; (void)filter; (void)default_name; (void)out; (void)n; return 0; }
+#endif
 void menu_init_second(SDL_Window* win) { (void)win; }
 void menu_show_second(int on) { (void)on; }
+#ifndef __APPLE__
 void menu_check_os(int id, int on) { (void)id; (void)on; }
 void menu_enable_os(int id, int on) { (void)id; (void)on; }
 int menu_command(const SDL_Event* e) { (void)e; return 0; }
+#endif
 int session_window_open(SDL_Window* win) { (void)win; return 0; }
 void volume_window_open(SDL_Window* win, int* volume, int* mute) { (void)win; (void)volume; (void)mute; }
 void volume_window_refresh(void) {}
