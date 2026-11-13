@@ -33,6 +33,14 @@ ifeq ($(OS),Windows_NT)
 NET_LIBS = -lws2_32 -liphlpapi -lgdi32 -lwinhttp -lcomdlg32
 endif
 NET_LIBS ?=
+# Linux: before glibc 2.34 threads, dlopen and shm_open/timer_create are in
+# libraries of their own (the AppImage's toolchain targets glibc 2.17)
+ifeq ($(OS),Windows_NT)
+SYS_LIBS =
+else ifeq ($(shell uname -s),Linux)
+SYS_LIBS = -lpthread -ldl -lrt
+endif
+SYS_LIBS ?=
 
 GENOBJ = $(patsubst $(GEN)/%.c,$(OBJ)/gen/%.o,$(wildcard $(GEN)/*.c))
 GEN7OBJ = $(patsubst $(GEN7)/%.c,$(OBJ)/gen7/%.o,$(wildcard $(GEN7)/*.c))
@@ -42,7 +50,7 @@ RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(RT))
 # resource the build makes from the ROM (tools/rom_icon.py)
 RES ?=
 $(OUT): $(GENOBJ) $(GEN7OBJ) $(RTOBJ) $(SLIRPOBJ) $(OBJ)/rt/exe_main.o $(RES)
-	$(CC) -o $@ $^ $(SDL_LIBS) -lm $(NET_LIBS) $(LDFLAGS)
+	$(CC) -o $@ $^ $(SDL_LIBS) -lm $(NET_LIBS) $(SYS_LIBS) $(LDFLAGS)
 
 # The game as a library (CORE=dqixcore.dll / dqixcore.so): in a session the
 # other players' DSes run from copies of it on one thread (hosting.c). Same
@@ -55,7 +63,7 @@ CORE_LDFLAGS ?= -Wl,-Bsymbolic -lpthread
 endif
 core: $(CORE)
 $(CORE): $(GENOBJ) $(GEN7OBJ) $(CORE_RTOBJ) $(SLIRPOBJ)
-	$(CC) -shared -o $@ $^ -lm $(NET_LIBS) $(CORE_LDFLAGS)
+	$(CC) -shared -o $@ $^ -lm $(NET_LIBS) $(SYS_LIBS) $(CORE_LDFLAGS)
 
 $(OBJ)/slirp/%.o: third_party/libslirp/%.c
 	@mkdir -p $(dir $@)
