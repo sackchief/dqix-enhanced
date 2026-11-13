@@ -15,6 +15,10 @@ OUT ?= dqix
 # char is signed there but unsigned on ARM64, and ARM64 GCC would otherwise
 # fuse a*b+c into one instruction that rounds differently.
 PORTABLE ?= -fsigned-char -ffp-contract=off
+# macOS hides the (deprecated, still working) ucontext calls the game threads use
+ifeq ($(shell uname -s),Darwin)
+PORTABLE += -D_XOPEN_SOURCE=700 -D_DARWIN_C_SOURCE
+endif
 
 RT = $(wildcard runtime/*.c)
 RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) runtime/frontend_$(FRONTEND).c
@@ -31,6 +35,9 @@ SLIRPOBJ = $(patsubst third_party/libslirp/%.c,$(OBJ)/slirp/%.o,$(SLIRP_SRC))
 SLIRP_INC = -Ithird_party/libslirp/src -Ithird_party/libslirp/glib
 ifeq ($(OS),Windows_NT)
 NET_LIBS = -lws2_32 -liphlpapi -lgdi32 -lwinhttp -lcomdlg32
+endif
+ifeq ($(shell uname -s),Darwin)
+NET_LIBS = -lresolv     # libslirp asks macOS's resolver for the DNS servers
 endif
 NET_LIBS ?=
 
@@ -50,6 +57,9 @@ $(OUT): $(GENOBJ) $(GEN7OBJ) $(RTOBJ) $(SLIRPOBJ) $(OBJ)/rt/exe_main.o $(RES)
 CORE_RTOBJ = $(patsubst runtime/%.c,$(OBJ)/rt/%.o,$(filter-out runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c,$(RT)) runtime/frontend_none.c)
 ifeq ($(OS),Windows_NT)
 CORE_LDFLAGS ?= -static-libgcc
+else ifeq ($(shell uname -s),Darwin)
+# macOS binds a library's own symbols to itself already (two-level namespace)
+CORE_LDFLAGS ?= -lpthread
 else
 CORE_LDFLAGS ?= -Wl,-Bsymbolic -lpthread
 endif

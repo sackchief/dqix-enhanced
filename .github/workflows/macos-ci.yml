@@ -1,0 +1,70 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+    branches: [main, stable]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # No ROM in CI: this checks that the recompiler's output is right on this
+    # CPU and that the whole runtime compiles. The game itself is built on the
+    # player's Mac from their own ROM (tools/build-game.sh).
+    name: Recompiler tests and runtime build (macOS ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: |
+          # LLVM 18, as on Ubuntu 24.04: the semantic tests compile cases.c with
+          # it, and newer clang (23) makes Thumb jump tables (add pc, rN) the
+          # recompiler doesn't follow. The game itself is never built with clang.
+          brew install sdl2 llvm@18
+          python -m pip install --disable-pip-version-check "PyYAML==6.0.2"
+          echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
+
+      - name: Check Python and shell syntax
+        run: |
+          python -m compileall -q recomp tools tests
+          sh -n tools/build-game.sh
+
+      - name: Run recompiler semantic tests
+        # the native side is compiled with "gcc", which on macOS is Apple clang
+        run: |
+          uname -m
+          clang --version | head -n 1
+          python tests/semantics/run.py 2000
+
+      - name: Compile the runtime (SDL frontend and the session core)
+        run: |
+          set -euo pipefail
+          objs=$(ls runtime/*.c | grep -v -E 'stub_runtime|frontend_none' | sed 's#runtime/\(.*\)\.c#build/obj/rt/\1.o#')
+          # the core library's frontend, and the network stack
+          objs="$objs build/obj/rt/frontend_none.o $(ls third_party/libslirp/src/*.c | sed 's#third_party/libslirp/\(.*\)\.c#build/obj/slirp/\1.o#') build/obj/slirp/glib/glib.o"
+          make -j"$(sysctl -n hw.ncpu)" -f build.mk OBJ=build/obj FRONTEND=sdl GEN=build/recomp PIC=-fPIC \
+            DEFS=-DRECOMP_TRACE $objs
+          echo "$(echo $objs | wc -w) objects compiled"

@@ -50,6 +50,7 @@ static int list_dir(const char* dir, int want_dirs, char names[][64], int max) {
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#include "self_exe.h"
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -203,7 +204,7 @@ static uint64_t build_id(void) {
     char exe[MAX_PATH]; DWORD l = GetModuleFileNameA(NULL, exe, MAX_PATH); if (l && l < MAX_PATH) h = fnv_file(exe, h);
     if (self_dir(dir, sizeof dir)) { snprintf(path, sizeof path, "%s\\dqixcore.dll", dir); h = fnv_file(path, h); }
 #else
-    h = fnv_file("/proc/self/exe", h);
+    { char exe[1024]; if (rt_self_exe(exe, sizeof exe) > 0) h = fnv_file(exe, h); }
     if (self_dir(dir, sizeof dir)) { snprintf(path, sizeof path, "%s/dqixcore.so", dir); h = fnv_file(path, h); }
 #endif
     return id = h | 1;
@@ -521,7 +522,7 @@ static void spawn_hidden(int k) {
     if (pid == 0) {
         FILE* f = freopen(log, "w", stderr); (void)f;
         f = freopen(log, "a", stdout); (void)f;
-        char self[1024]; ssize_t l = readlink("/proc/self/exe", self, sizeof self - 1); self[l > 0 ? l : 0] = 0;
+        char self[1024]; rt_self_exe(self, sizeof self);
         char* args[] = { self, g_rom_path, g_extract_path, (char*)"0", (char*)"1", save, NULL };
         execve(self, args, env);
         _exit(127);
@@ -546,7 +547,7 @@ static LibHandle lib_open(const char* p) { return LoadLibraryA(p); }
 static void* lib_sym(LibHandle h, const char* n) { return (void*)GetProcAddress(h, n); }
 #else
 #include <dlfcn.h>
-#include <ucontext.h>
+#include <ucontext.h>    /* macOS: build.mk defines _XOPEN_SOURCE for it */
 typedef void* LibHandle;
 #define LIB_EXT ".so"
 static LibHandle lib_open(const char* p) { return dlopen(p, RTLD_NOW | RTLD_LOCAL); }
@@ -614,9 +615,7 @@ static int self_dir(char* out, size_t n) {
     char exe[MAX_PATH]; DWORD l = GetModuleFileNameA(NULL, exe, MAX_PATH);
     if (!l || l >= MAX_PATH) return 0;
 #else
-    char exe[1024]; ssize_t l = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (l <= 0) return 0;
-    exe[l] = 0;
+    char exe[1024]; if (rt_self_exe(exe, sizeof exe) <= 0) return 0;
 #endif
     char* sl = strrchr(exe, '/');
 #ifdef _WIN32
