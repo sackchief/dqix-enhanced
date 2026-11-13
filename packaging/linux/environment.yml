@@ -1,3 +1,4 @@
+# Linux x86_64. packaging/linux/environment-aarch64.yml is the same for ARM64: keep them in step.
 name: dqix-builder
 channels:
   - conda-forge

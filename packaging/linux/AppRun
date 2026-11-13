@@ -117,10 +117,11 @@ fi
 export LD_LIBRARY_PATH="$ENV_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONNOUSERSITE=1
 
-if command -v x86_64-conda-linux-gnu-cc >/dev/null 2>&1; then
-    export CC="$(command -v x86_64-conda-linux-gnu-cc)"
-elif command -v x86_64-conda-linux-gnu-gcc >/dev/null 2>&1; then
-    export CC="$(command -v x86_64-conda-linux-gnu-gcc)"
+HOST_ARCH="$(uname -m)"
+if command -v "$HOST_ARCH-conda-linux-gnu-cc" >/dev/null 2>&1; then
+    export CC="$(command -v "$HOST_ARCH-conda-linux-gnu-cc")"
+elif command -v "$HOST_ARCH-conda-linux-gnu-gcc" >/dev/null 2>&1; then
+    export CC="$(command -v "$HOST_ARCH-conda-linux-gnu-gcc")"
 elif command -v gcc >/dev/null 2>&1; then
     export CC="$(command -v gcc)"
 else

@@ -204,6 +204,7 @@ static void skins_scan(void) {
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image_write.h"                                  /* public domain (Sean Barrett): the report's window.png */
 #include "menu_ingame.h"
+#include "self_exe.h"
 #ifdef _WIN32
 #define PATH_SEP '\\'
 #else
@@ -826,6 +827,9 @@ static int try_gl(void) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);   /* macOS: core 3.2+ only this way (gives 4.1) */
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     g_win = SDL_CreateWindow("Dragon Quest IX", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * g_scale, 384 * g_scale,
                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
@@ -1957,7 +1961,8 @@ static void restart_with(const char* session) {
     if (session) setenv("DQIX_SESSION", session, 1); else unsetenv("DQIX_SESSION");
     if (g_player_name[0]) setenv("DQIX_PLAYER_NAME", g_player_name, 1);
     extern char** g_argv;
-    execv("/proc/self/exe", g_argv);
+    char self[1024];
+    if (rt_self_exe(self, sizeof self) > 0) execv(self, g_argv);
 #endif
 }
 
