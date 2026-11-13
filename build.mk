@@ -11,6 +11,11 @@ OBJ ?= obj
 FRONTEND ?= none
 OUT ?= dqix
 
+# Every CPU must compute exactly what x86 does (sessions mix PCs): plain
+# char is signed there but unsigned on ARM64, and ARM64 GCC would otherwise
+# fuse a*b+c into one instruction that rounds differently.
+PORTABLE ?= -fsigned-char -ffp-contract=off
+
 RT = $(wildcard runtime/*.c)
 RT := $(filter-out runtime/stub_runtime.c runtime/frontend_%.c runtime/gl_render.c runtime/menu_win32.c runtime/menu_items.c runtime/menu_ingame.c runtime/controls.c runtime/discord.c runtime/exe_main.c,$(RT)) runtime/frontend_$(FRONTEND).c
 
@@ -54,47 +59,47 @@ $(CORE): $(GENOBJ) $(GEN7OBJ) $(CORE_RTOBJ) $(SLIRPOBJ)
 
 $(OBJ)/slirp/%.o: third_party/libslirp/%.c
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -w $(PIC) -DLIBSLIRP_STATIC_BUILD -DBUILDING_LIBSLIRP -DG_LOG_DOMAIN=\"Slirp\" $(SLIRP_INC) -c $< -o $@
+	$(CC) -O2 -w $(PIC) $(PORTABLE) -DLIBSLIRP_STATIC_BUILD -DBUILDING_LIBSLIRP -DG_LOG_DOMAIN=\"Slirp\" $(SLIRP_INC) -c $< -o $@
 
 $(OBJ)/rt/net.o: runtime/net.c runtime/nds.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall $(PIC) -DLIBSLIRP_STATIC_BUILD $(DEFS) $(SLIRP_INC) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall $(PIC) $(PORTABLE) -DLIBSLIRP_STATIC_BUILD $(DEFS) $(SLIRP_INC) -Iruntime -c $< -o $@
 
 $(OBJ)/gen/%.o: $(GEN)/%.c runtime/cpu.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(PIC) $(DEFS) -Iruntime -I$(GEN) -c $< -o $@
+	$(CC) $(CFLAGS) $(PIC) $(PORTABLE) $(DEFS) -Iruntime -I$(GEN) -c $< -o $@
 
 $(OBJ)/gen7/%.o: $(GEN7)/%.c runtime/cpu.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(PIC) $(DEFS) -Iruntime -I$(GEN7) -c $< -o $@
+	$(CC) $(CFLAGS) $(PIC) $(PORTABLE) $(DEFS) -Iruntime -I$(GEN7) -c $< -o $@
 
 $(OBJ)/rt/gl_render.o: runtime/gl_render.c runtime/gl_render.h runtime/gpu3d.h runtime/nds.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/controls.o: runtime/controls.c runtime/controls.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/discord.o: runtime/discord.c runtime/discord.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/menu_win32.o: runtime/menu_win32.c runtime/menu.h runtime/controls.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/menu_items.o: runtime/menu_items.c runtime/menu.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/menu_ingame.o: runtime/menu_ingame.c runtime/menu_ingame.h runtime/menu.h runtime/text.h runtime/controls.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 $(OBJ)/rt/frontend_sdl.o: runtime/frontend_sdl.c runtime/nds.h runtime/frontend.h runtime/gl_render.h runtime/menu.h runtime/menu_ingame.h runtime/version.h runtime/session.h runtime/air.h runtime/text.h runtime/controls.h runtime/discord.h runtime/music.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
+	$(CC) -O2 -g -Wall -Wno-unused-parameter $(PIC) $(PORTABLE) $(DETERMINISM) $(SDL_CFLAGS) $(DEFS) -Iruntime -c $< -o $@
 
 # Sessions need every PC to compute exactly the same: no stack garbage in uninitialised variables.
 DETERMINISM ?= -ftrivial-auto-var-init=zero
@@ -102,7 +107,7 @@ $(OBJ)/rt/relay.o: runtime/relay.h runtime/relay_url.h
 $(OBJ)/rt/music.o: runtime/stb_vorbis.h runtime/dr_flac.h runtime/music.h
 $(OBJ)/rt/%.o: runtime/%.c runtime/nds.h runtime/cpu.h runtime/coro.h runtime/frontend.h runtime/version.h runtime/air.h runtime/session.h
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter $(PIC) $(DETERMINISM) $(DEFS) -Iruntime -I$(GEN) -c $< -o $@
+	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter $(PIC) $(PORTABLE) $(DETERMINISM) $(DEFS) -Iruntime -I$(GEN) -c $< -o $@
 
 clean:
 	rm -rf $(OBJ) $(OUT) $(CORE)

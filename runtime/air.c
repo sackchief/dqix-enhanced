@@ -76,10 +76,17 @@ static double now_ms(void) {
  * away), then let others run, and after a couple of milliseconds sleep in
  * short naps so a console waiting on a friend's buttons doesn't burn a core. */
 static double g_wait_start;
+static inline void cpu_relax(void) {                            /* a spin-wait hint to the CPU */
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ __volatile__("yield");
+#endif
+}
 static void relax(unsigned* spins) {
     if (rt_yield()) return;                                     /* one of several consoles on a thread: let the others run */
     ++*spins;
-    if (*spins < 256) { __builtin_ia32_pause(); return; }
+    if (*spins < 256) { cpu_relax(); return; }
     if (*spins == 256) g_wait_start = now_ms();
     if (now_ms() - g_wait_start < 2.0) {
 #ifdef _WIN32

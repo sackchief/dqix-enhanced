@@ -16,8 +16,16 @@ concurrency:
 
 jobs:
   tests:
-    name: Source and recompiler tests (no ROM)
-    runs-on: ubuntu-24.04
+    name: Source and recompiler tests (no ROM, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -46,9 +54,23 @@ jobs:
         run: python tests/semantics/run.py 2000
 
   appimage:
-    name: Package and smoke-test builder AppImage
+    name: Package and smoke-test builder AppImage (${{ matrix.arch }})
     needs: tests
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            environment: packaging/linux/environment.yml
+            appimagetool_sha256: 46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            environment: packaging/linux/environment-aarch64.yml
+            appimagetool_sha256: 04f45ea45b5aa07bb2b071aed9dbf7a5185d3953b11b47358c1311f11ea94a96
+    runs-on: ${{ matrix.runner }}
+    env:
+      APPIMAGE_NAME: DQIX-Enhanced-Builder-${{ matrix.arch }}.AppImage
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -61,7 +83,7 @@ jobs:
       - name: Set up pinned build environment (cached)
         uses: mamba-org/setup-micromamba@v3
         with:
-          environment-file: packaging/linux/environment.yml
+          environment-file: ${{ matrix.environment }}
           create-args: --strict-channel-priority
           cache-environment: true
           cache-downloads: true
@@ -78,17 +100,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/appimagetool
-          key: appimagetool-1.9.0-x86_64-46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1
+          key: appimagetool-1.9.0-${{ matrix.arch }}-${{ matrix.appimagetool_sha256 }}
 
       - name: Verify appimagetool checksum
         env:
-          APPIMAGETOOL_SHA256: 46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1
+          APPIMAGETOOL_SHA256: ${{ matrix.appimagetool_sha256 }}
+          ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p "$HOME/.cache/appimagetool"
-          TOOL="$HOME/.cache/appimagetool/appimagetool-x86_64.AppImage"
+          TOOL="$HOME/.cache/appimagetool/appimagetool-$ARCH.AppImage"
           if [ ! -f "$TOOL" ]; then
             curl --fail --location --retry 3 \
-              https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage \
+              https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-$ARCH.AppImage \
               --output "$TOOL"
           fi
           printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$TOOL" | sha256sum --check -
@@ -154,19 +177,19 @@ jobs:
 
           echo "Project version: $VERSION" > dist/build-info.txt
           echo "Source commit: $GITHUB_SHA" >> dist/build-info.txt
-          echo "Target: Linux x86_64; build host: Ubuntu 22.04" >> dist/build-info.txt
-          echo "Toolchain: packaging/linux/environment.yml, packed with conda-pack" >> dist/build-info.txt
+          echo "Target: Linux ${{ matrix.arch }}; build host: Ubuntu 22.04 (${{ matrix.runner }})" >> dist/build-info.txt
+          echo "Toolchain: ${{ matrix.environment }}, packed with conda-pack" >> dist/build-info.txt
           echo "ROM and prebuilt game: not included; build occurs on the user's machine" >> dist/build-info.txt
-          echo "AppImage tool: appimagetool 1.9.0 (sha256 46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1)" >> dist/build-info.txt
+          echo "AppImage tool: appimagetool 1.9.0 ${{ matrix.arch }} (sha256 ${{ matrix.appimagetool_sha256 }})" >> dist/build-info.txt
 
       - name: Build AppImage
         shell: bash -el {0}
         run: |
           set -euo pipefail
-          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+          ARCH=${{ matrix.arch }} APPIMAGE_EXTRACT_AND_RUN=1 \
             "$APPIMAGETOOL" "$RUNNER_TEMP/DQIX-Enhanced.AppDir" \
-            "$GITHUB_WORKSPACE/dist/DQIX-Enhanced-Builder-x86_64.AppImage"
-          chmod +x dist/DQIX-Enhanced-Builder-x86_64.AppImage
+            "$GITHUB_WORKSPACE/dist/$APPIMAGE_NAME"
+          chmod +x "dist/$APPIMAGE_NAME"
 
       - name: Smoke-test bundled toolchain
         env:
@@ -176,19 +199,19 @@ jobs:
           XDG_DATA_HOME: ${{ runner.temp }}/appimage-data
         run: |
           mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
-          ./dist/DQIX-Enhanced-Builder-x86_64.AppImage --self-test
+          "./dist/$APPIMAGE_NAME" --self-test
 
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum DQIX-Enhanced-Builder-x86_64.AppImage build-info.txt > SHA256SUMS
+          sha256sum "$APPIMAGE_NAME" build-info.txt > SHA256SUMS
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dqix-enhanced-appimage
+          name: dqix-enhanced-appimage-${{ matrix.arch }}
           path: |
-            dist/DQIX-Enhanced-Builder-x86_64.AppImage
+            dist/${{ env.APPIMAGE_NAME }}
             dist/SHA256SUMS
             dist/build-info.txt
           if-no-files-found: error
