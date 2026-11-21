@@ -85,7 +85,9 @@ same. Turned on and off with **Mods > Transmog**.
    (`torso = 13621`), and save the file. **Mods > Item numbers for
    transmog** writes and opens `transmog_items.txt`: every piece of
    equipment's number, by slot, with its name in your game's language (read
-   from your ROM). The `# wears` numbers of your other characters work too. `worn` shows what is worn. (`torso: 13621` works
+   from your ROM). The `# wears` numbers of your other characters work too. `worn` shows what is worn;
+   `empty` shows the slot as if nothing were worn there (`head = empty`: no
+   helmet, the hair shows). (`torso: 13621` works
    too; what follows a `#` is only a note.) Each slot takes its own kind of
    item: head 12xxx, torso 13xxx, arms 14xxx-15xxx, legs 16xxx, feet 17xxx,
    accessory 18xxx, weapon 19xxx-20xxx, shield 21xxx; a number of another
@@ -116,5 +118,12 @@ How it works and what it covers:
   not match the moves; such a look is left out and the real weapon shown.
 - A slot where nothing is worn shows nothing: a shield look needs a shield
   (any) in hand, a helmet look something on the head.
+- `empty` uses what the game itself shows for an empty slot (func_02072afc):
+  nothing for the head, weapon, shield and accessory (without a helmet the
+  hair shows), and the game's stand-ins for the body (what is under the
+  armour; for the arms, the torso's sleeves). Their cache entries are learnt
+  from the game. In battle, a whip's or bow's strike still shows the real
+  weapon for a moment when the weapon slot is `empty` (the game names that
+  model on its own and needs one).
 - While playing together (Wireless) and in replays of bug reports, everyone
   looks as they are: the games must stay identical in memory.

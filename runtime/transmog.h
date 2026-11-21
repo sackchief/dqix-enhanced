@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 enum { TM_SLOTS = 8 };                        /* torso, legs, arms, feet, head, weapon, shield, accessory */
+enum { TM_EMPTY = -2 };                       /* a look: as if nothing were worn there ("empty") */
 extern const char* const g_tm_slot_names[TM_SLOTS];
 
 int  transmog_ignored(void);                 /* looks in it that don't fit their slot (ignored) */
@@ -13,7 +14,7 @@ void transmog_refresh(void);                 /* the party's models are made agai
 void transmog_block(int blocked);            /* playing together: off */
 int  transmog_active(void);
 /* name: the character's name (text, as the game keeps it) */
-int  transmog_get(const uint8_t* name, int slot);          /* item number, or -1: as worn */
+int  transmog_get(const uint8_t* name, int slot);          /* item number, TM_EMPTY, or -1: as worn */
 void transmog_set(const uint8_t* name, int slot, int item);
 
 /* Writes the item numbers of every piece of equipment, by slot, with their

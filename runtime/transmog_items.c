@@ -241,7 +241,8 @@ int transmog_write_items(const char* path, int language) {
     fprintf(f, "# DQIX item numbers for transmog.ini (Mods > Transmog), from your game, in %s.\n"
                "# In transmog.ini, under a character's name: slot = number, e.g. head = 12170,\n"
                "# then Mods > Reload transmog.ini. Each slot takes only the numbers listed under it.\n"
-               "# A weapon look is used only on a weapon of the same kind (the same hundreds, e.g. 203xx whips).\n", NAME[language]);
+               "# A weapon look is used only on a weapon of the same kind (the same hundreds, e.g. 203xx whips).\n"
+               "# \"empty\" (in transmog.ini) shows a slot as if nothing were worn there.\n", NAME[language]);
     static const int ORDER[TM_SLOTS] = { 4, 0, 2, 1, 3, 5, 6, 7 };   /* head, torso, arms, legs, feet, weapon, shield, accessory */
     int total = 0;
     for (int oi = 0; oi < TM_SLOTS; oi++) {

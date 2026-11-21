@@ -95,7 +95,7 @@ static Entry* find(const uint8_t* name, int create) {
  *   torso     = 13621   # wears 13619
  *   legs      = worn    # wears 16214
  * One section per character, by name; "worn" (or a slot not listed) shows
- * what is worn. "torso: 13621" works too. Item numbers are the ones the DQIX
+ * what is worn, "empty" shows the slot as if nothing were worn there. "torso: 13621" works too. Item numbers are the ones the DQIX
  * save editor shows. */
 int transmog_load(const char* path) {
     if (path) snprintf(g_path, sizeof g_path, "%s", path);
@@ -136,6 +136,8 @@ int transmog_load(const char* path) {
         while (isspace((unsigned char)*p)) p++;
         int v = -1;
         if (isdigit((unsigned char)*p)) v = atoi(p);
+        else if (tolower((unsigned char)p[0]) == 'e' && tolower((unsigned char)p[1]) == 'm' && tolower((unsigned char)p[2]) == 'p'
+                 && tolower((unsigned char)p[3]) == 't' && tolower((unsigned char)p[4]) == 'y') v = TM_EMPTY;
         for (char* k = key; *k; k++) *k = (char)tolower((unsigned char)*k);
         for (int s = 0; s < TM_SLOTS; s++) {
             if (strcmp(key, g_tm_slot_names[s])) continue;
@@ -145,7 +147,7 @@ int transmog_load(const char* path) {
     }
     fclose(f);
     int looks = 0;
-    for (int i = 0; i < g_ntm; i++) for (int s = 0; s < TM_SLOTS; s++) looks += g_tm[i].look[s] >= 0;
+    for (int i = 0; i < g_ntm; i++) for (int s = 0; s < TM_SLOTS; s++) looks += g_tm[i].look[s] != -1;
     return looks;
 }
 
@@ -159,17 +161,19 @@ int transmog_save(void) {
                "# Each slot takes its own kind: head 12xxx, torso 13xxx, arms 14xxx-15xxx, legs 16xxx,\n"
                "# feet 17xxx, accessory 18xxx, weapon 19xxx-20xxx, shield 21xxx. A slot nothing is worn in shows nothing.\n"
                "# A weapon look is used only on a weapon of the same kind (the same hundreds: a whip, 203xx, for a whip).\n"
-               "# \"worn\": shows what is really worn. What is really worn (and every number) doesn't change.\n"
+               "# \"worn\": shows what is really worn; \"empty\": shows the slot as if nothing were worn there\n"
+               "# (no helmet: the hair; no armour: what is under it). What is really worn (and every number) doesn't change.\n"
                "# Numbers: Mods > Item numbers for transmog (transmog_items.txt) lists them all, with names,\n"
                "# or copy another character's \"# wears\" ones below.\n");
     for (int i = 0; i < g_ntm; i++) {
         int any = g_tm[i].seen;
-        for (int s = 0; s < TM_SLOTS; s++) any |= g_tm[i].look[s] >= 0;
+        for (int s = 0; s < TM_SLOTS; s++) any |= g_tm[i].look[s] != -1;
         if (!any) continue;
         fprintf(f, "\n[%s]\n", (const char*)g_tm[i].name);
         for (int s = 0; s < TM_SLOTS; s++) {
             char v[16];
-            if (g_tm[i].look[s] >= 0) snprintf(v, sizeof v, "%d", g_tm[i].look[s]); else snprintf(v, sizeof v, "worn");
+            if (g_tm[i].look[s] >= 0) snprintf(v, sizeof v, "%d", g_tm[i].look[s]);
+            else snprintf(v, sizeof v, "%s", g_tm[i].look[s] == TM_EMPTY ? "empty" : "worn");
             if (!g_tm[i].seen) { fprintf(f, "%-9s = %s\n", g_tm_slot_names[s], v); continue; }
             if (fits(s, g_tm[i].worn[s])) fprintf(f, "%-9s = %-6s  # wears %d\n", g_tm_slot_names[s], v, g_tm[i].worn[s]);   /* (the game lists stand-ins for empty slots) */
             else fprintf(f, "%-9s = %-6s  # wears nothing\n", g_tm_slot_names[s], v);
@@ -197,8 +201,9 @@ int transmog_get(const uint8_t* name, int slot) {
 }
 void transmog_set(const uint8_t* name, int slot, int item) {
     if (slot < 0 || slot >= TM_SLOTS || (item >= 0 && !fits(slot, item))) return;
-    Entry* e = find(name, item >= 0);
-    if (e) e->look[slot] = (int16_t)(item >= 0 ? item : -1);
+    if (item < 0 && item != TM_EMPTY) item = -1;
+    Entry* e = find(name, item != -1);
+    if (e) e->look[slot] = (int16_t)item;
 }
 
 /* ---------------------------------------------------------------- the party, for the menu */
@@ -245,6 +250,37 @@ static void learn(int item, uint32_t look) {
     if (item < 0 || item >= 0x8000) return;
     if (!g_looks_known[item]) g_nknown++;
     g_looks[item] = look; g_looks_known[item] = 1;
+}
+
+/* "empty": a slot as the game makes it when nothing is worn there
+ * (func_02072afc): the look list then has -1 for the head, the weapon, the
+ * shield and the accessory, and stand-ins for the body: 1000 for the torso,
+ * 8001 for the legs, 994 for the feet, and for the arms the torso's sleeves
+ * (the word after the equipment, +0x49e) or 8010. Their cache entries are
+ * learnt whole from the game (+0x08..+0x1f; the -1 one is the same for
+ * everyone), and in the equipment the slot says -1, as when it is empty. */
+#define EMPTY_WORDS 6                     /* +0x08..+0x1f of a cache entry */
+static int empty_item(int k, uint32_t d) {
+    switch (k) {
+    case 0: return 1000;
+    case 1: return 8001;
+    case 6: return 994;
+    case 5: { int sleeves = (int16_t)mem_read16(d + CHAR_EQUIPMENT + 0x16); return sleeves >= 0 ? sleeves : 8010; }
+    default: return -1;
+    }
+}
+typedef struct { int item; uint32_t w[EMPTY_WORDS]; } EmptyEntry;
+static EmptyEntry g_empty[64];
+static int g_nempty;
+static const EmptyEntry* known_empty(int item) {
+    for (int i = 0; i < g_nempty; i++) if (g_empty[i].item == item) return &g_empty[i];
+    return NULL;
+}
+static void learn_empty(int item, uint32_t ent) {
+    if (known_empty(item) || g_nempty >= (int)(sizeof g_empty / sizeof g_empty[0])) return;
+    EmptyEntry* x = &g_empty[g_nempty++];
+    x->item = item;
+    for (int j = 0; j < EMPTY_WORDS; j++) x->w[j] = mem_read32(ent + 8 + 4u * (uint32_t)j);
 }
 
 /* The party member (game object index 0..) whose data holds addr, or 0. */
@@ -341,13 +377,21 @@ void wrap_fill_items(Cpu* c) {
     int16_t real[N_LOOK], ids[N_LOOK];
     int need = 0;
     for (int k = 0; k < N_LOOK; k++) ids[k] = real[k] = (int16_t)mem_read16(list + 2u * (uint32_t)k);
+    for (int k = 0; k < N_LOOK; k++) if ((int16_t)mem_read16(base + (uint32_t)(k * ENTRY) + 0x18) == real[k] && real[k] == empty_item(k, d))
+        learn_empty(real[k], base + (uint32_t)(k * ENTRY));     /* a slot really empty: the game's own entry */
+    int probe_empty[N_LOOK] = { 0 };
     for (int sl = 0; sl < TM_SLOTS; sl++) {
-        uint32_t dummy; int item = e->look[sl];
-        if (usable(sl, item, real[SLOT_INDEX[sl]]) && !known_look(item, &dummy)) { ids[SLOT_INDEX[sl]] = (int16_t)item; need = 1; }
+        uint32_t dummy; int item = e->look[sl], k = SLOT_INDEX[sl];
+        if (item == TM_EMPTY) {
+            int t = empty_item(k, d);
+            if (!known_empty(t)) { ids[k] = (int16_t)t; probe_empty[k] = 1; need = 1; }
+        } else if (usable(sl, item, real[k]) && !known_look(item, &dummy)) { ids[k] = (int16_t)item; need = 1; }
     }
     if (!need) return;
     Cpu out = *c;
     probe(c, &in, base, list, ids);
+    for (int k = 0; k < N_LOOK; k++)
+        if (probe_empty[k] && (int16_t)mem_read16(base + (uint32_t)(k * ENTRY) + 0x18) == ids[k]) learn_empty(ids[k], base + (uint32_t)(k * ENTRY));
     for (int k = 0; k < N_LOOK; k++) mem_write16(list + 2u * (uint32_t)k, (uint16_t)real[k]);
     *c = in; wrap_fill_items_orig(c);                          /* the real items again */
     *c = out;
@@ -370,23 +414,35 @@ void wrap_part_name(Cpu* c) {
      * uncoiled as it strikes, the bow drawn) is named with no cache, only
      * the weapon's own entry (func_ov025_021e63b0, through func_02054000):
      * that entry is in the same cache. */
-    if (d && !base && c->r[2] < N_LOOK && c->r[3] == d + CACHE + c->r[2] * ENTRY) base = d + CACHE;
+    int no_cache = 0;
+    if (d && !base && c->r[2] < N_LOOK && c->r[3] == d + CACHE + c->r[2] * ENTRY) { base = d + CACHE; no_cache = 1; }
     Entry* e = NULL;
     if (d && d + CACHE == base) { uint8_t name[NAME_LEN + 1]; read_name(d, name); e = find(name, 0); }
     if (!e) { wrap_part_name_orig(c); return; }
-    uint32_t saved_look[N_LOOK]; uint16_t saved_id[N_LOOK], saved_eq[N_LOOK]; int patched[N_LOOK] = { 0 };
+    uint32_t saved[N_LOOK][EMPTY_WORDS]; uint16_t saved_eq[N_LOOK]; int patched[N_LOOK] = { 0 };
     for (int s = 0; s < TM_SLOTS; s++) {
         uint32_t look; int item = e->look[s], k = SLOT_INDEX[s];
         uint32_t ent = base + (uint32_t)(k * ENTRY), eq = d + CHAR_EQUIPMENT + 2u * (uint32_t)equip_index(k);
-        if (!usable(s, item, (int16_t)mem_read16(ent + 0x18)) || !known_look(item, &look)) continue;
-        saved_look[k] = mem_read32(ent + 0x10); saved_id[k] = mem_read16(ent + 0x18); saved_eq[k] = mem_read16(eq);
-        mem_write32(ent + 0x10, look); mem_write16(ent + 0x18, (uint16_t)item); mem_write16(eq, (uint16_t)item);
-        patched[k] = 1;
+        const EmptyEntry* empty = NULL;
+        if (item == TM_EMPTY) {
+            empty = known_empty(empty_item(k, d));
+            /* (the whip or bow a battle names alone always has a model) */
+            if (!empty || (no_cache && empty->item < 0)) continue;
+        } else if (!usable(s, item, (int16_t)mem_read16(ent + 0x18)) || !known_look(item, &look)) continue;
+        for (int j = 0; j < EMPTY_WORDS; j++) saved[k][j] = mem_read32(ent + 8 + 4u * (uint32_t)j);
+        saved_eq[k] = mem_read16(eq);
+        if (empty) {
+            for (int j = 0; j < EMPTY_WORDS; j++) mem_write32(ent + 8 + 4u * (uint32_t)j, empty->w[j]);
+            mem_write16(eq, 0xFFFF);
+        } else { mem_write32(ent + 0x10, look); mem_write16(ent + 0x18, (uint16_t)item); mem_write16(eq, (uint16_t)item); }
+        patched[k] = empty ? 2 : 1;
     }
     wrap_part_name_orig(c);
     for (int k = 0; k < N_LOOK; k++) if (patched[k]) {
         uint32_t ent = base + (uint32_t)(k * ENTRY), eq = d + CHAR_EQUIPMENT + 2u * (uint32_t)equip_index(k);
-        mem_write32(ent + 0x10, saved_look[k]); mem_write16(ent + 0x18, saved_id[k]); mem_write16(eq, saved_eq[k]);
+        if (patched[k] == 2) for (int j = 0; j < EMPTY_WORDS; j++) mem_write32(ent + 8 + 4u * (uint32_t)j, saved[k][j]);
+        else { mem_write32(ent + 0x10, saved[k][2]); mem_write16(ent + 0x18, (uint16_t)saved[k][4]); }   /* (+0x10, +0x18) */
+        mem_write16(eq, saved_eq[k]);
     }
 }
 
