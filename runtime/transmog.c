@@ -366,6 +366,11 @@ void wrap_part_name(Cpu* c) {
     if (!transmog_active()) { wrap_part_name_orig(c); return; }
     uint32_t base = mem_read32(c->r[13]);
     uint32_t d = object_chardata((int)c->r[1]);
+    /* In battle, a whip's or a bow's second model (p_w<n>a: the whip
+     * uncoiled as it strikes, the bow drawn) is named with no cache, only
+     * the weapon's own entry (func_ov025_021e63b0, through func_02054000):
+     * that entry is in the same cache. */
+    if (d && !base && c->r[2] < N_LOOK && c->r[3] == d + CACHE + c->r[2] * ENTRY) base = d + CACHE;
     Entry* e = NULL;
     if (d && d + CACHE == base) { uint8_t name[NAME_LEN + 1]; read_name(d, name); e = find(name, 0); }
     if (!e) { wrap_part_name_orig(c); return; }
