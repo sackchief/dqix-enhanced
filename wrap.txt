@@ -18,3 +18,26 @@ main 02045864 glyph_plain
 # memcpy: the tags of letters follow them when the game copies them itself
 # (the textures above go through a staging buffer).
 main 02001a40 memcpy
+
+# The 11 items a character's 3D model is built from (torso, legs, face,
+# hairstyle twice, arms, feet, head, weapon, shield, accessory):
+# func_02072afc(object index, out part ids[11], out item ids[11]). Every place
+# that builds a character's model asks this first. Watched by transmog.c
+# (Mods > Transmog), which notes what each character wears.
+main 02072afc look_items
+# Fills a party member's item cache (11 entries, +0x194 in its data) from the
+# list above; the game's numbers are added up from this cache, so transmog.c
+# leaves it as the game fills it (it only learns the chosen looks here).
+main 020deef4 fill_items
+# Makes the file name of one part of a character's model from a cache entry:
+# func_02072e94(out name, object, list index, entry, [sp] cache). transmog.c
+# shows the chosen look in the cache for the time of this call only.
+main 02072e94 part_name
+# The overlays are the same in both ROMs (only the main code moves).
+# func_ov017_0218f5a4(field, object, 0, 0, [sp] force): makes a party member's
+# model again if its items changed (or forced); transmog.c notes the field.
+ov017 0218f5a4 model_check
+# The party on the field, once a frame: after Reload transmog.ini or
+# Mods > Transmog, transmog.c makes the party's models again at its end
+# (the check above, forced), so a new look shows at once.
+ov017 0218e8c8 party_frame

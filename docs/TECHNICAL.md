@@ -277,6 +277,8 @@ DQIX_INPUT_FILE=input.txt                      the same from a file (reports use
 DQIX_WATCH=addr                                log every ARM9 write to that word, with a call trace
 DQIX_WATCHREAD=addr[,len]                      log the code that reads those bytes (each place once, with the calls before it)
 DQIX_TRACESTR="addr:rN,addr:sN"                log the text an argument points to when a function is entered (rN register, sN stack word)
+DQIX_TRANSMOG=transmog.ini / DQIX_TRANSMOGLOG=1 transmog on with that file (headless tests) / log each character's model items
+DQIX_TRANSMOG_RELOAD="frame:file,..."         read each transmog.ini at its frame, as Reload does ("frame:write=file": as Choose the looks)
 DQIX_DUMP=dir,30                               write every 30th frame as .ppm
 DQIX_RTC=1760000000                            fixed clock start (reproducible runs)
 DQIX_PROF=from,to                              function-entry profile for those frames
@@ -330,6 +332,8 @@ runtime/menu_win32.c   the menu bar (Windows)
 runtime/gl_render.c    OpenGL: Enhanced 3D, composition, the DS Lite screen + console
 runtime/frontend_none.c headless frontend (tests)
 runtime/report.c       F10 / crash reports (inputs, saves, screenshot, log)
+runtime/transmog.c     Mods > Transmog: characters look as if they wore other equipment (transmog.ini)
+runtime/transmog_items.c the item numbers list (transmog_items.txt) from the ROM's itemname.gp2 (Level-5 GPC, LZ10/Huffman/RLE)
 patches.txt            instruction overrides applied when recompiling
 build-pc.bat           one-click Windows build (installs MSYS2 first time)
 build-windows.sh       the build itself (runs inside MSYS2)

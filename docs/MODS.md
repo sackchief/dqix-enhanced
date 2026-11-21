@@ -61,3 +61,57 @@ change in memory. Replays of bug reports also leave music packs off.
 
 Packs you share should contain only your own recordings or ones you have
 the right to share.
+
+## Transmog
+
+A character can look as if they wore other equipment, while what they
+really wear (and so every number: attack, defence, resistances) stays the
+same. Turned on and off with **Mods > Transmog**.
+
+1. Play until the characters you want to change have been on screen, then
+   choose **Mods > Choose the looks (transmog.ini)**. It opens
+   `transmog.ini` (next to the game) with a section for each character the
+   game has shown, a line for each slot, and what is worn there now:
+
+   ```
+   [Riastea]
+   torso     = worn    # wears 13619
+   legs      = worn    # wears 16214
+   head      = worn    # wears 12410
+   ...
+   ```
+
+2. Replace `worn` with the number of the item that slot should look like
+   (`torso = 13621`), and save the file. **Mods > Item numbers for
+   transmog** writes and opens `transmog_items.txt`: every piece of
+   equipment's number, by slot, with its name in your game's language (read
+   from your ROM). The `# wears` numbers of your other characters work too. `worn` shows what is worn. (`torso: 13621` works
+   too; what follows a `#` is only a note.) Each slot takes its own kind of
+   item: head 12xxx, torso 13xxx, arms 14xxx-15xxx, legs 16xxx, feet 17xxx,
+   accessory 18xxx, weapon 19xxx-20xxx, shield 21xxx; a number of another
+   kind is ignored (Reload says so), since the game would make a broken
+   model of it.
+3. Choose **Mods > Reload transmog.ini**. It says how many looks it found,
+   and the party is dressed again at once.
+
+Nothing in your save changes: take `transmog.ini` away (or turn Transmog
+off) and everyone looks as they are. Characters are found by name.
+
+How it works and what it covers:
+- The game keeps a cache of each party member's equipment and adds up their
+  numbers from it, so the cache always holds what is really worn. When the
+  game fills it, it is asked once more with the chosen looks, to learn their
+  model numbers, and then fills it again with the real equipment. Only while
+  the file name of one model part is made does the cache say the chosen look.
+  Reload (and turning Transmog on or off) makes the party's models again the
+  way an equipment change does. A save made with and without transmog, also
+  after a Reload while playing, is identical byte for byte.
+- It changes the party's 3D models: on the field, in battles and in the
+  cutscenes played with those models. Menus (the equipment preview) and
+  cinematics that draw characters their own way still show what is worn.
+- A weapon is held the way its real type is: choose a look of the same
+  weapon type (a sword for a sword).
+- A slot where nothing is worn shows nothing: a shield look needs a shield
+  (any) in hand, a helmet look something on the head.
+- While playing together (Wireless) and in replays of bug reports, everyone
+  looks as they are: the games must stay identical in memory.
