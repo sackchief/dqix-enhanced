@@ -275,6 +275,8 @@ Testing aids (environment variables):
 DQIX_INPUT="1780:touch=128,160:10;2400:A:20"   scripted input (frame:buttons+touch=x,y:frames)
 DQIX_INPUT_FILE=input.txt                      the same from a file (reports use this)
 DQIX_WATCH=addr                                log every ARM9 write to that word, with a call trace
+DQIX_WATCHREAD=addr[,len]                      log the code that reads those bytes (each place once, with the calls before it)
+DQIX_TRACESTR="addr:rN,addr:sN"                log the text an argument points to when a function is entered (rN register, sN stack word)
 DQIX_DUMP=dir,30                               write every 30th frame as .ppm
 DQIX_RTC=1760000000                            fixed clock start (reproducible runs)
 DQIX_PROF=from,to                              function-entry profile for those frames

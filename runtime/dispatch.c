@@ -210,8 +210,10 @@ void prof_report(FILE* f) {
 }
 
 void threads_note_call(int arm7, uint32_t addr);
+static void trace_str(uint32_t addr);
 void recomp_trace_enter(uint32_t addr) {
     prof_add(addr, 9);
+    trace_str(addr);
     threads_note_call(0, addr);
     g_trace_cpu[g_trace_pos % TRACE_N] = 9;
     g_trace[g_trace_pos++ % TRACE_N] = addr;
@@ -229,6 +231,32 @@ void recomp_trace_enter(uint32_t addr) {
         trace_dump(stderr, getenv("DQIX_TRACEN") ? atoi(getenv("DQIX_TRACEN")) : 16);
     }
 }
+/* DQIX_TRACESTR="addr:rN,addr:sN,...": when the function at addr is entered,
+ * log the text its argument points to (rN: in register N; sN: the Nth word on
+ * the stack, the 5th argument is s0). Debugging: which file names the game asks
+ * for, say. */
+static void trace_str(uint32_t addr) {
+    static int n = -1; static uint32_t fa[16]; static char kind[16]; static int idx[16];
+    if (n < 0) {
+        n = 0;
+        const char* e = getenv("DQIX_TRACESTR");
+        while (e && *e && n < 16) {
+            unsigned a; char k; int i;
+            if (sscanf(e, "%x:%c%d", &a, &k, &i) != 3) break;
+            fa[n] = a; kind[n] = k; idx[n] = i; n++;
+            e = strchr(e, ','); if (e) e++;
+        }
+    }
+    for (int k = 0; k < n; k++) {
+        if (fa[k] != addr) continue;
+        uint32_t p = kind[k] == 's' ? mem_read32(g_arm9.r[13] + 4u * (uint32_t)idx[k]) : g_arm9.r[idx[k] & 15];
+        char s[96]; int i = 0;
+        for (; i < 95; i++) { uint8_t ch = mem_read8(p + (uint32_t)i); if (!ch) break; s[i] = (ch >= 32 && ch < 127) ? (char)ch : '?'; }
+        s[i] = 0;
+        fprintf(stderr, "[f%llu] %08x(\"%s\") lr %08x %s\n", (unsigned long long)g_frame, addr, s, g_arm9.r[14], recomp_func_name(g_arm9.r[14]));
+    }
+}
+
 void recomp7_trace_enter(uint32_t addr) {
     prof_add(addr, 7);
     threads_note_call(1, addr);
