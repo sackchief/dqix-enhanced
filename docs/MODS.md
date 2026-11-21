@@ -109,8 +109,11 @@ How it works and what it covers:
 - It changes the party's 3D models: on the field, in battles and in the
   cutscenes played with those models. Menus (the equipment preview) and
   cinematics that draw characters their own way still show what is worn.
-- A weapon is held the way its real type is: choose a look of the same
-  weapon type (a sword for a sword).
+- A weapon look is used only on a weapon of the same kind (the same
+  hundreds: 200xx swords, 203xx whips, 209xx bows, ...). In battle a weapon
+  is held, drawn and swung the way its real kind is (a whip is only drawn
+  when it strikes, a bow is held in the other hand), so another kind would
+  not match the moves; such a look is left out and the real weapon shown.
 - A slot where nothing is worn shows nothing: a shield look needs a shield
   (any) in hand, a helmet look something on the head.
 - While playing together (Wireless) and in replays of bug reports, everyone

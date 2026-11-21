@@ -53,6 +53,18 @@ const char* const g_tm_slot_names[TM_SLOTS] = { "torso", "legs", "arms", "feet",
 static const int SLOT_LO[TM_SLOTS] = { 13000, 16000, 14000, 17000, 12000, 19000, 21000, 18000 };
 static const int SLOT_HI[TM_SLOTS] = { 13999, 16999, 15999, 17999, 12999, 20999, 21999, 18999 };
 static int fits(int slot, int item) { return item >= SLOT_LO[slot] && item <= SLOT_HI[slot]; }
+/* A weapon's hundreds say its kind (190xx knives, 191xx hammers, 200xx
+ * swords, 201xx fans, 202xx axes, 203xx whips, 204xx staves, 205xx spears,
+ * 206xx clubs, 207xx boomerangs, 208xx claws, 209xx bows). In battle, how a
+ * weapon is held, drawn and swung goes by the kind of the one really worn: a
+ * whip is drawn only when it strikes, a bow is held in the other hand, and so
+ * on. So a weapon look is used only on a weapon of its own kind (and not
+ * bare-handed); other slots only need to fit. */
+#define SLOT_WEAPON 5
+static int usable(int slot, int look, int real) {
+    if (look < 0 || !fits(slot, look)) return 0;
+    return slot != SLOT_WEAPON || (fits(slot, real) && look / 100 == real / 100);
+}
 static int g_ignored;                /* looks in transmog.ini that don't fit their slot */
 int transmog_ignored(void) { return g_ignored; }
 
@@ -146,6 +158,7 @@ int transmog_save(void) {
                "# save this file, then Mods > Reload transmog.ini (the party is dressed again at once).\n"
                "# Each slot takes its own kind: head 12xxx, torso 13xxx, arms 14xxx-15xxx, legs 16xxx,\n"
                "# feet 17xxx, accessory 18xxx, weapon 19xxx-20xxx, shield 21xxx. A slot nothing is worn in shows nothing.\n"
+               "# A weapon look is used only on a weapon of the same kind (the same hundreds: a whip, 203xx, for a whip).\n"
                "# \"worn\": shows what is really worn. What is really worn (and every number) doesn't change.\n"
                "# Numbers: Mods > Item numbers for transmog (transmog_items.txt) lists them all, with names,\n"
                "# or copy another character's \"# wears\" ones below.\n");
@@ -330,7 +343,7 @@ void wrap_fill_items(Cpu* c) {
     for (int k = 0; k < N_LOOK; k++) ids[k] = real[k] = (int16_t)mem_read16(list + 2u * (uint32_t)k);
     for (int sl = 0; sl < TM_SLOTS; sl++) {
         uint32_t dummy; int item = e->look[sl];
-        if (item >= 0 && fits(sl, item) && !known_look(item, &dummy)) { ids[SLOT_INDEX[sl]] = (int16_t)item; need = 1; }
+        if (usable(sl, item, real[SLOT_INDEX[sl]]) && !known_look(item, &dummy)) { ids[SLOT_INDEX[sl]] = (int16_t)item; need = 1; }
     }
     if (!need) return;
     Cpu out = *c;
@@ -359,8 +372,8 @@ void wrap_part_name(Cpu* c) {
     uint32_t saved_look[N_LOOK]; uint16_t saved_id[N_LOOK], saved_eq[N_LOOK]; int patched[N_LOOK] = { 0 };
     for (int s = 0; s < TM_SLOTS; s++) {
         uint32_t look; int item = e->look[s], k = SLOT_INDEX[s];
-        if (item < 0 || !fits(s, item) || !known_look(item, &look)) continue;
         uint32_t ent = base + (uint32_t)(k * ENTRY), eq = d + CHAR_EQUIPMENT + 2u * (uint32_t)equip_index(k);
+        if (!usable(s, item, (int16_t)mem_read16(ent + 0x18)) || !known_look(item, &look)) continue;
         saved_look[k] = mem_read32(ent + 0x10); saved_id[k] = mem_read16(ent + 0x18); saved_eq[k] = mem_read16(eq);
         mem_write32(ent + 0x10, look); mem_write16(ent + 0x18, (uint16_t)item); mem_write16(eq, (uint16_t)item);
         patched[k] = 1;
