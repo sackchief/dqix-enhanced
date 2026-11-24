@@ -213,8 +213,13 @@ def main():
                 bad += 1
                 if bad <= 5:
                     print(f"region: call at {fr:08x} goes to {t if t is None else hex(t)}, the map says {to:08x}", file=sys.stderr)
-    if bad:
+    # Another version of the game differs in thousands of calls; a ROM hack of
+    # this one rewrites a few (its own hooks), and the recompiler follows the
+    # instructions it finds, so those are fine.
+    if bad > n // 200:
         sys.exit(f"region: {bad} of {n} calls don't match: this ROM isn't the European version this was made for")
+    if bad:
+        print(f"region: {bad} of {n} calls differ from the map (a modified ROM?): the ROM's own are used", file=sys.stderr)
 
     for name in ("hle.txt", "tags.txt", "patches.txt", "interpret.txt", "wrap.txt"):
         map_list(os.path.join(root, name), os.path.join(out, name), mp.main)

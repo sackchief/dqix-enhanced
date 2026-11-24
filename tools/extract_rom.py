@@ -91,11 +91,26 @@ def main():
         'base_address': a9_load, 'entry_function': a9_entry, 'build_info': p,
         'autoload_callback': u32(rom, 0x70), 'overlay_signatures': 0, 'encrypted': False,
         'compressed': compressed, 'bss_start': bss_start, 'bss_end': bss_end, 'sdk_version': sdk})
+    # One file per TCM. A ROM hack can add a block of its own (code at the top
+    # of the ITCM, say) beside the game's: the blocks of one TCM are merged,
+    # in address order, the space between them zero (as the game's own
+    # autoload leaves it: the earlier block's bss, then untouched memory).
+    tcm = {}
     for (dest, data, bss) in blocks:
-        name = 'itcm' if dest < 0x02000000 else 'dtcm'
-        open(os.path.join(out, f'arm9/{name}.bin'), 'wb').write(data)
+        tcm.setdefault('itcm' if dest < 0x02000000 else 'dtcm', []).append((dest, data, bss))
+    for name, parts in tcm.items():
+        parts.sort()
+        base = parts[0][0]
+        merged = bytearray()
+        for dest, data, bss in parts:
+            if dest - base < len(merged): sys.exit(f'{name}: autoload blocks overlap at {dest:08x}')
+            merged += bytes(dest - base - len(merged)) + data
+        bss = parts[-1][2]
+        if len(parts) > 1:
+            print(f'{name}: {len(parts)} autoload blocks merged ({base:08x}-{base + len(merged) + bss:08x})')
+        open(os.path.join(out, f'arm9/{name}.bin'), 'wb').write(bytes(merged))
         yaml_write(os.path.join(out, f'arm9/{name}.yaml'), {
-            'base_address': dest, 'code_size': len(data), 'bss_size': bss, 'kind': name.capitalize()})
+            'base_address': base, 'code_size': len(merged), 'bss_size': bss, 'kind': name.capitalize()})
 
     # ARM7
     open(os.path.join(out, 'arm7/arm7.bin'), 'wb').write(rom[a7_off:a7_off + a7_size])
