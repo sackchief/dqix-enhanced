@@ -2150,6 +2150,8 @@ static void report_send(const char* dir, const char* description) {
              DQIX_VERSION,
 #ifdef _WIN32
              "Windows",
+#elif defined(__APPLE__)
+             "macOS",
 #else
              "Linux",
 #endif
