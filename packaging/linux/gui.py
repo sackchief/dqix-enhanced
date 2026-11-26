@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import platform
 from pathlib import Path
 import queue
 import shutil
@@ -139,7 +140,7 @@ class BuilderApp:
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(10, 0))
         ttk.Label(footer, text=f"Version source : {version}", style="Hint.TLabel").pack(side="left")
-        ttk.Label(footer, text="Linux x86_64 · Toolchain incluse", style="Hint.TLabel").pack(side="right")
+        ttk.Label(footer, text=f"Linux {platform.machine()} · Toolchain incluse", style="Hint.TLabel").pack(side="right")
 
         self.root.after(100, self._poll_events)
         if existing_rom.is_file() and (self.default_workspace / "game" / "play.sh").is_file():

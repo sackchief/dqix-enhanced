@@ -61,19 +61,20 @@ Pour les scripts ou l'automatisation, le mode CLI reste disponible : --build-onl
 
 Le workflow .github/workflows/linux-ci-appimage.yml :
 
-1. exécute les contrôles Python/shell et les tests sémantiques sans ROM ;
+1. exécute les contrôles Python/shell et les tests sémantiques sans ROM, sur x86_64 et sur AArch64 ;
 2. crée l'environnement versionné sur Ubuntu 22.04 et le packe avec conda-pack ;
 3. met en cache l'environnement et appimagetool épinglé par SHA-256 ;
 4. assemble l'AppDir contenant AppRun, le fichier desktop, l'icône générique, les sources publiques, gui.py et l'archive de toolchain ;
 5. crée l'AppImage et l'exécute avec --self-test, en mode extraction sans FUSE ;
-6. publie l'AppImage, SHA256SUMS et build-info.txt comme artefact CI.
+6. publie l'AppImage, SHA256SUMS et build-info.txt comme artefact CI (dqix-enhanced-appimage-x86_64 et dqix-enhanced-appimage-aarch64).
 
 
 Le test --self-test valide les imports Python/Tk, la syntaxe de l'interface, le compilateur, Make, SDL2 et un petit programme de liaison SDL2. En environnement CI sans affichage, il n'ouvre pas de fenêtre. Le test d'intégration visuelle et le build du vrai jeu nécessitent encore un test manuel sur Linux avec une ROM personnelle.
 
 ## Compatibilité et limites
 
-- L'artefact est x86_64 ; une cible AArch64 nécessitera son propre job, environnement et artefact.
+- Deux artefacts : x86_64 (packaging/linux/environment.yml) et AArch64/ARM64 (packaging/linux/environment-aarch64.yml), chacun construit et testé sur un runner GitHub natif de son architecture. Les deux fichiers d'environnement doivent rester alignés.
+- Le C généré et le runtime sont compilés avec -fsigned-char et -ffp-contract=off (PORTABLE dans build.mk) : un PC ARM64 calcule exactement comme un PC x86 dans une session.
 - La compilation de l'AppImage utilise Ubuntu 22.04, tandis que la CI de test du recompiler utilise Ubuntu 24.04. La glibc et certains composants de l'hôte imposent encore des limites de compatibilité.
 - Les sélecteurs Tk nécessitent une session graphique X11 ou Wayland compatible. Sans affichage, utiliser --self-test ou les modes CLI.
 - La progression du build est basée sur les étapes textuelles du script : elle n'indique pas le pourcentage exact du travail restant au sein d'une longue étape.

@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.join(ROOT, "recomp"))
 from build import Func, Module, Recompiler  # noqa: E402
 
 BASE = 0x02000000
+# same as PORTABLE in build.mk: x86 C semantics on ARM64 hosts too
+PORTABLE = ["-fsigned-char", "-ffp-contract=off"]
 LDS = """
 SECTIONS {
   . = 0x02000000;
@@ -214,7 +216,7 @@ def run_mode(mode, iters):
     rows = "\n".join(f'  {{ "{t}", {t}, fn_main_{names[t]:08x} }},' for t in tests)
     open(f"{gen}/harness.c", "w").write(HARNESS.replace("@DECLS@", decls).replace("@TESTS@", rows))
     rt = os.path.join(ROOT, "runtime")
-    sh("gcc", "-O1", "-w", "-o", f"{d}/test", f"-I{rt}", f"-I{gen}", f"{gen}/harness.c", f"{gen}/code.c",
+    sh("gcc", "-O1", "-w", *PORTABLE, "-o", f"{d}/test", f"-I{rt}", f"-I{gen}", f"{gen}/harness.c", f"{gen}/code.c",
        f"{gen}/table.c", cases)
     r = subprocess.run([f"{d}/test", f"{d}/image.bin", str(iters)], capture_output=True, text=True)
     # Same tests through the interpreter (runtime/interp.c), all code interpreted
@@ -225,7 +227,7 @@ def run_mode(mode, iters):
           + "\nstatic const struct { const char* name; native_fn native; uint32_t addr; } tests[] = {\n" + rows_i + "\n};\n"
           + HARNESS_RNG + INTERP_MAIN)
     open(f"{gen}/harness_interp.c", "w").write(hi)
-    sh("gcc", "-O1", "-w", "-o", f"{d}/test_interp", f"-I{rt}", f"-I{gen}", f"{gen}/harness_interp.c",
+    sh("gcc", "-O1", "-w", *PORTABLE, "-o", f"{d}/test_interp", f"-I{rt}", f"-I{gen}", f"{gen}/harness_interp.c",
        os.path.join(rt, "interp.c"), cases, "-lm")
     r2 = subprocess.run([f"{d}/test_interp", f"{d}/image.bin", str(iters // 4)], capture_output=True, text=True)
     print(f"--- {mode} through the interpreter")
