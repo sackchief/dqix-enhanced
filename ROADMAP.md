@@ -31,7 +31,11 @@ bottom with the version they arrived in.
       half of the requests); a new relay address that serves only DQIX
       Enhanced v34 and later (other builds get a "this relay has moved"
       message, and the deploy script to run their own); the old address
-      kept for a few weeks for v33 players.
+      kept for a few weeks for v33 players. The address is read from a file
+      in the repository that updates come from (so a fork that updates from
+      its own repository uses its own relay), the README says the relay is
+      for DQIX Enhanced only, and the relay caps sessions per address and
+      how long one can last.
 - [ ] **Bug reports that still replay after an update**: the report keeps
       the build's widescreen settings that change what the game counts as
       in view, and the replay uses them.
