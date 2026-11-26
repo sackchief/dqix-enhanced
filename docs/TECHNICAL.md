@@ -196,6 +196,13 @@ on one PC without a session; `DQIX_PROCESSES=1` runs the hidden DSes as
 separate processes instead of `dqixcore`. In tag mode, press A once more after Erinn's "Go get
 'em!": the canvassing starts then.
 
+On Linux, joining or hosting with a code (the relay, https) uses OpenSSL: install
+its development files to build (`libssl-dev`; `build.mk` finds it with
+`pkg-config`, and `TLS=0` builds without it, leaving the relay reachable only
+over plain http). The relay's certificate and name are checked against the
+system's certificates. `tests/relay_tls/run.sh` tests it headless against a
+local TLS server.
+
 **Settings.** The game remembers every menu choice in `settings.ini` next to `dqix.exe` (delete it to go
 back to the defaults). Enhanced needs OpenGL 3.3 (nearly every PC from the
 last 12 years); without it, the game stays in Classic. `set DQIX_SOFTWARE=1`
