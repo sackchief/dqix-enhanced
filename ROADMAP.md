@@ -66,11 +66,20 @@ what's missing is everything around it.
 - [ ] **Installing on Linux**: rakmahefa's AppImage builder (v32) builds
       the game from your ROM; still to come: a desktop shortcut for the
       game and the updater without `.bat` files.
-- [ ] **Steam Deck**: building without a compiler on SteamOS (a bundled
-      toolchain for desktop mode, or build on any PC and copy over), adding
-      it to Steam as a non-Steam game with a controller layout (the menu on
-      a button), basic widescreen for the 16:10 screen. Until then, players
-      can try the Windows build through Proton (untested).
+- [ ] **Steam Deck** (the v35 headline; in v34: "should work through the
+      Linux AppImage, testers wanted"):
+      - building with no compiler on SteamOS: BUILD.sh falls back to the
+        AppImage's own toolchain (so RecompLauncher works on the Deck too);
+      - a Deck preset on the first launch (its 1280x800 screen and Steam
+        detected): fullscreen, **Dynamic Widescreen**, Auto resolution;
+      - controls: default buttons that suit the Deck (the in-game menu on
+        one), a recommended Steam Input layout to publish, and the Deck's
+        touchscreen as the DS's touch screen;
+      - typing (names, join codes) with Steam's on-screen keyboard;
+      - Game Mode: leaving the game goes straight back to Steam, no window
+        borders or dialogs;
+      - updates from the game on Linux (needed for Linux in general).
+      Tested on a real Deck at each step (a tester from the Discord).
 - [ ] **Android**: the game built on a PC (phones can't run the build
       tools) and copied to the phone; the touchscreen as the DS's bottom
       screen; OpenGL ES versions of the shaders.
