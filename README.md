@@ -5,7 +5,7 @@
 **Dragon Quest IX: Sentinels of the Starry Skies, as a native PC game.**
 
 This project turns your own copy of Dragon Quest IX (the USA or European DS
-cartridge's ROM) into a real Windows program, built on your PC from your ROM. Nothing
+cartridge's ROM) into a real PC program, built on your PC from your ROM. Nothing
 from the game is included here: no code, no graphics, no music. It isn't an
 emulator running the DS's code. The game's code has been recompiled into
 native PC code, with the DS's hardware rebuilt around it. So it can play
@@ -30,7 +30,8 @@ help, news, and friends to play with.
 - **Always improving.** Contributors add new features and fixes frequently:
   Linux, macOS, HD text and more.
 - **Built from your own cartridge.** Nothing from the game is included, and
-  it runs natively on Windows and Linux.
+  it runs natively on Windows, Linux (beta) and macOS (experimental), with
+  the Steam Deck on the way.
 
 ## Screenshots
 

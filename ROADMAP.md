@@ -3,13 +3,8 @@
 What's planned for DQIX Enhanced, roughly in order. Done items move to the
 bottom with the version they arrived in.
 
-## Next: v34
+## Next: v35
 
-- [ ] **An in-game menu** drawn by the game itself (Esc, or a controller
-      button): every option in a list over the game, easy with a controller.
-      The menu bar only exists on Windows, so this is what opens up Linux,
-      the Steam Deck and handhelds, and it gives controller players on
-      Windows a menu too.
 - [ ] **A first-launch choice**: "Like the DS" or "Enhanced (sharper 3D,
       Basic Widescreen)", asked once on a new install, so new players find
       what the project can do. Existing players keep their settings.
@@ -61,8 +56,6 @@ bottom with the version they arrived in.
 The game already runs on Linux (every automated test is a Linux build);
 what's missing is everything around it.
 
-- [ ] (In v34, above.) **An in-game menu**: needed on the Steam Deck,
-      Linux, Android and handhelds like the Thor; also gives Mac a menu.
 - [ ] **Installing on Linux**: rakmahefa's AppImage builder (v32) builds
       the game from your ROM; still to come: a desktop shortcut for the
       game and the updater without `.bat` files.
@@ -173,6 +166,10 @@ the same room.
 
 ## Done
 
+- [x] **v34 released as stable**: the in-game menu (` or the controller's
+      Home button; nothing opens a window of its own), Linux as beta (also
+      ARM64, https relay), macOS and the Steam Deck as experimental,
+      RecompLauncher support, Transmog (Mods), fewer relay messages.
 - [x] **v33 released as stable**: Dynamic Widescreen battles (submenus
       shown whole, the panels in the party's order, a party of one, long
       messages above the panels), dialogue boxes with a tag and Yes/No kept
