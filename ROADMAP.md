@@ -25,6 +25,13 @@ bottom with the version they arrived in.
       is (its shadow is right), with one arm stretched far across the
       floor. Also in Classic mode, so it's in the core, not widescreen;
       to be compared with a reference emulator.
+- [ ] **The relay, for the paid Cloudflare plan** (no daily cap any more;
+      the bill is by use, so fewer messages keep it near the $5 minimum):
+      each message carries 2-3 frames of inputs instead of 1 (a third to a
+      half of the requests); a new relay address that serves only DQIX
+      Enhanced v34 and later (other builds get a "this relay has moved"
+      message, and the deploy script to run their own); the old address
+      kept for a few weeks for v33 players.
 - [ ] **Bug reports that still replay after an update**: the report keeps
       the build's widescreen settings that change what the game counts as
       in view, and the replay uses them.
@@ -33,6 +40,9 @@ bottom with the version they arrived in.
 
 ## Then
 
+- [ ] **Direct connections between players** (v35): friends connect
+      straight to each other where their networks allow (the MIT-licensed
+      recomp-net approach, with credit), and the relay is only the fallback.
 - [ ] **A reported bug with coups de grâce** (what goes wrong isn't known
       yet: no bug report). First a test-only switch that makes a coup de
       grâce available on the first turn of any battle (the game's own check
