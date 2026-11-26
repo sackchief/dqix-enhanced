@@ -7,8 +7,23 @@ setlocal
 cd /d "%~dp0"
 title Dragon Quest IX PC - build
 
-rem ---- the ROM: the first .nds in the "rom" folder (or a .zip with one in it), or ask for it
+rem ---- RecompLauncher (recomplauncher.json "prepare"): BUILD.bat --prepare "<your ROM>"
+rem builds from that ROM without asking anything or pausing, and if it fails its
+rem last line says why (the launcher shows only that line)
+set "PREPARE="
 set "ROM="
+if /i not "%~1"=="--prepare" goto pick_rom
+set "PREPARE=1"
+set "DQIX_NOPAUSE=1"
+set "ROM=%~f2"
+if "%~2"=="" goto prepare_no_rom
+if exist "%ROM%" goto check_zip
+:prepare_no_rom
+echo BUILD FAILED: the ROM wasn't found ("%~2"). Choose your own Dragon Quest IX .nds file, or a .zip with it inside.
+exit /b 1
+
+:pick_rom
+rem ---- the ROM: the first .nds in the "rom" folder (or a .zip with one in it), or ask for it
 for %%f in ("%~dp0rom\*.nds") do if not defined ROM set "ROM=%%~ff"
 if defined ROM goto have_rom
 for %%f in ("%~dp0rom\*.zip") do if not defined ROM set "ROM=%%~ff"
@@ -66,6 +81,10 @@ exit /b 0
 :failed
 echo.
 echo BUILD FAILED. The text above says why.
+if defined PREPARE if exist "%~dp0build\last-error.txt" (
+    set /p LASTERR=<"%~dp0build\last-error.txt"
+    call echo BUILD FAILED while %%LASTERR%%
+)
 if not defined DQIX_NOPAUSE pause
 exit /b 1
 
@@ -73,6 +92,7 @@ exit /b 1
 echo.
 echo BUILD FAILED: the build tools (MSYS2) aren't ready. The text above says why.
 echo Nothing was built; your game, saves and settings are untouched.
+if defined PREPARE echo BUILD FAILED: the build tools (MSYS2) couldn't be installed or repaired. Nothing was changed; check the internet connection and try again.
 if not defined DQIX_NOPAUSE pause
 exit /b 1
 
@@ -80,5 +100,6 @@ exit /b 1
 echo.
 echo BUILD FAILED: no ROM could be taken out of "%ROM%".
 echo Choose the .nds file itself, or a .zip with the .nds in it.
+if defined PREPARE echo BUILD FAILED: no Dragon Quest IX ROM was found in the zip. Choose the .nds file itself, or a .zip with the .nds in it.
 if not defined DQIX_NOPAUSE pause
 exit /b 1

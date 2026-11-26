@@ -12,7 +12,7 @@
 Both unzip into a folder called DQIX-PC, so unzipping the extras zip over the
 project puts them in DQIX-PC/extras/ where BUILD.bat looks.
 """
-import io, os, re, subprocess, sys, zipfile
+import copy, io, os, re, subprocess, sys, zipfile
 
 out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
@@ -29,9 +29,35 @@ with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as z:
         data = src.read(info)
         if info.filename.lower().endswith(('.bat', '.txt')) and not info.filename.startswith('DQIX-PC/config/'):
             data = data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
-        info.compress_type = zipfile.ZIP_DEFLATED
-        z.writestr(info, data)
+        out_info = copy.copy(info)                                     # (src's own entry stays readable)
+        out_info.compress_type = zipfile.ZIP_DEFLATED
+        z.writestr(out_info, data)
 print(p, os.path.getsize(p) // 1024, 'KB,', len(src.infolist()), 'entries')
+
+# RecompLauncher's zips (stable versions only: the launcher installs the newest
+# release that has one, so a nightly's would reach every launcher player): the
+# same project with recomplauncher.json at the zip's top, one zip per system.
+# The Linux one leaves out the .bat files, so the launcher, trying
+# recomplauncher.json's programs in order, finds BUILD.sh and game/dqix.
+if 'nightly' not in ver:
+    for system in ('Windows-x64', 'Linux-x64'):
+        p = os.path.join(out, f'DQIX-Enhanced-{ver}-{system}.zip')
+        n = 0
+        with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as z:
+            for info in src.infolist():
+                name = info.filename[len('DQIX-PC/'):]
+                if not name or (system.startswith('Linux') and name.lower().endswith('.bat')):
+                    continue
+                data = src.read(info)
+                if system.startswith('Windows') and name.lower().endswith(('.bat', '.txt')) and not name.startswith('config/'):
+                    data = data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+                zi = zipfile.ZipInfo(name, info.date_time)
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zi.create_system = 3                                   # Unix, so the modes below count
+                mode = 0o755 if name.endswith('.sh') or name.endswith('/') else 0o644
+                zi.external_attr = ((0o40000 | mode) << 16 | 0x10) if name.endswith('/') else (0o100000 | mode) << 16
+                z.writestr(zi, data); n += 1
+        print(p, os.path.getsize(p) // 1024, 'KB,', n, 'entries (RecompLauncher)')
 
 # the extras (only where they are: they don't change between nightlies)
 if not os.path.isdir('wfc') or not any(os.path.isfile(os.path.join('wfc', g, '_list.txt')) for g in os.listdir('wfc')):

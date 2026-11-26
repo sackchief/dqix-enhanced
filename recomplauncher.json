@@ -1,0 +1,88 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "DQIX Enhanced",
+  "repo": "sackchief/dqix-enhanced",
+  "game": {
+    "kind": "iso",
+    "label": "Your own Dragon Quest IX ROM (.nds, or a .zip with it inside), dumped from your DS cartridge: the USA (YDQE) or European (YDQP) version."
+  },
+  "prepare": {
+    "program": ["BUILD.bat", "BUILD.sh"],
+    "args": ["--prepare", "{game}"],
+    "label": "Building the PC game from your ROM (the first time downloads the build tools and takes 10-20 minutes)",
+    "timeout": 3600
+  },
+  "start": {
+    "program": ["game/dqix.exe", "game/dqix"]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{install}/game/settings.ini" }]
+    }
+  ],
+  "saves": [
+    "{install}/game/dqix.sav",
+    "{install}/game/save-backups",
+    "{install}/game/settings.ini",
+    "{install}/game/controls.ini"
+  ],
+  "folders": {
+    "saves": [{ "path": "{install}/game" }],
+    "logs": [{ "path": "{install}/game" }],
+    "reports": [{ "path": "{install}/game/reports" }]
+  },
+  "settings": [
+    {
+      "id": "window",
+      "label": "Window",
+      "help": "Full screen or a window (F11 switches in the game).",
+      "choices": [
+        { "label": "Windowed", "set": { "fullscreen": "0" } },
+        { "label": "Full screen", "set": { "fullscreen": "1" } }
+      ],
+      "defaults": { "fullscreen": "0" }
+    },
+    {
+      "id": "mode",
+      "label": "Graphics",
+      "help": "Enhanced draws the 3D sharper on your graphics card; Classic is exactly like the DS (F5 switches).",
+      "choices": [
+        { "label": "Enhanced", "set": { "mode": "enhanced" } },
+        { "label": "Classic", "set": { "mode": "classic" } }
+      ],
+      "defaults": { "mode": "enhanced" }
+    },
+    {
+      "id": "layout",
+      "label": "Screens",
+      "help": "How the DS's two screens are laid out (F2 switches in the game).",
+      "choices": [
+        { "label": "Stacked, like a DS", "set": { "layout": "stacked" } },
+        { "label": "Side by side", "set": { "layout": "side_by_side" } },
+        { "label": "Basic Widescreen", "set": { "layout": "wide" } },
+        { "label": "Dynamic Widescreen (experimental)", "set": { "layout": "wide_dynamic" } }
+      ],
+      "defaults": { "layout": "stacked" }
+    },
+    {
+      "id": "language",
+      "label": "Language",
+      "help": "The game's language. Only the European version has all five; the USA version is always in English.",
+      "choices": [
+        { "label": "English", "set": { "language": "english" } },
+        { "label": "Français", "set": { "language": "french" } },
+        { "label": "Deutsch", "set": { "language": "german" } },
+        { "label": "Italiano", "set": { "language": "italian" } },
+        { "label": "Español", "set": { "language": "spanish" } }
+      ],
+      "defaults": { "language": "english" }
+    }
+  ],
+  "actions": [
+    { "id": "saves", "label": "Game folder", "help": "Your save (dqix.sav), its backups and the game's settings.", "open": "saves" },
+    { "id": "reports", "label": "Bug reports", "help": "The reports F10 makes in the game, to send with a bug.", "open": "reports" }
+  ]
+}

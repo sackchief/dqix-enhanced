@@ -11,8 +11,10 @@
 set -e
 STEP="starting"
 # a step that fails without a message of its own still says which it was
-trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "   The build stopped while: $STEP (error $rc)."; fi' EXIT
+# (also kept in build/last-error.txt: BUILD.bat --prepare ends on it for RecompLauncher)
+trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "   The build stopped while: $STEP (error $rc)."; mkdir -p build; echo "$STEP (error $rc)" > build/last-error.txt; fi' EXIT
 cd "$(dirname "$0")/.."
+rm -f build/last-error.txt
 ROM="$1"
 [ -f "$ROM" ] || { echo "No ROM given (or it doesn't exist): $ROM"; exit 1; }
 

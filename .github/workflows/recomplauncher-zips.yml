@@ -1,0 +1,30 @@
+# When a stable release is published on GitHub: attach RecompLauncher's zips
+# to it (tools/make-release.py: DQIX-Enhanced-<version>-Windows-x64.zip and
+# -Linux-x64.zip, the project with recomplauncher.json at the top; no ROM,
+# no game code, no programs). RecompLauncher installs the newest release that
+# has one and builds the game on the player's PC from their own ROM.
+#
+# Nightlies are skipped (pre-releases, or "nightly" in the version), so
+# launcher players only ever get stable versions.
+name: RecompLauncher zips
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  zips:
+    if: ${{ !github.event.release.prerelease && !contains(github.event.release.tag_name, 'nightly') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Make the zips
+        run: python3 tools/make-release.py out
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls out/stable/DQIX-Enhanced-*-x64.zip
+          gh release upload "${{ github.event.release.tag_name }}" out/stable/DQIX-Enhanced-*-x64.zip --clobber
