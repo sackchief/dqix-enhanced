@@ -33,6 +33,12 @@ bottom with the version they arrived in.
 
 ## Then
 
+- [ ] **A reported bug with coups de grâce** (what goes wrong isn't known
+      yet: no bug report). First a test-only switch that makes a coup de
+      grâce available on the first turn of any battle (the game's own check
+      forced to pass; never shown to players), with a save to start from,
+      so it can be tested on demand. Then the fix, once we know what the
+      bug is: a description, a photo or an F10 report from a player helps.
 - [ ] **Cheats** (Mods > Cheats): Action Replay codes, then simple switches
       like double experience or gold. Off while playing with friends.
 
