@@ -36,6 +36,7 @@
 #include "gl_render.h"
 #include "discord.h"
 #include "music.h"
+#include "transmog.h"
 #include "text_hd.h"
 #include "menu.h"
 #include "version.h"
@@ -70,6 +71,7 @@ static int g_smooth = 0;                                          /* Enhanced: s
 static int g_discord = 1;                                         /* Modern > Show on Discord what I'm playing (discord.c) */
 static int g_tex_pack = 1, g_tex_up = 0, g_tex_dump = 0;           /* Mods (gl_render.c) */
 static int g_mus_pack = 1, g_mus_names = 0, g_mus_vol = 70;      /* Mods: music packs (music.c) */
+static int g_transmog = 1;                                        /* Mods: transmog (transmog.c, transmog.ini) */
 static int g_hd_text = 0;                                            /* Enhanced: the game's letters redrawn at full resolution (text_hd.h) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 50;                                  /* widescreen: how solid the small screen over the field is (O), % */
@@ -595,6 +597,7 @@ static void settings_load(void) {
         else if (!strcmp(key, "hd_text")) g_hd_text = atoi(val) != 0;
         else if (!strcmp(key, "texture_packs")) g_tex_pack = atoi(val) != 0;
         else if (!strcmp(key, "music_packs")) g_mus_pack = atoi(val) != 0;
+        else if (!strcmp(key, "transmog")) g_transmog = atoi(val) != 0;
         else if (!strcmp(key, "music_song_names")) g_mus_names = atoi(val) != 0;
         else if (!strcmp(key, "music_pack_volume")) { int v = atoi(val); if (v >= 0 && v <= 200) g_mus_vol = v; }
         else if (!strcmp(key, "discord")) g_discord = atoi(val) != 0;
@@ -664,6 +667,8 @@ static void settings_save(void) {
     fprintf(f, "texture_packs = %d\n", g_tex_pack);
     fprintf(f, "# Mods: music packs (OGG / FLAC recordings in the music folder played instead of the game's songs): 0 or 1\n");
     fprintf(f, "music_packs = %d\n", g_mus_pack);
+    fprintf(f, "# Mods: transmog (characters look as if they wore the equipment chosen in transmog.ini): 0 or 1\n");
+    fprintf(f, "transmog = %d\n", g_transmog);
     fprintf(f, "# Mods: a notice with each song's name as it starts (to find which file replaces it): 0 or 1\n");
     fprintf(f, "music_song_names = %d\n", g_mus_names);
     fprintf(f, "# Mods: how loud the recordings are against the game's sounds, in %% (0 to 200)\n");
@@ -969,6 +974,7 @@ void frontend_init(int argc, char** argv) {
     }
     wireless_apply(1);                                          /* read by firmware_init */
     if (!g_headless) { music_set_volume(g_mus_vol); music_enable(g_mus_pack); }   /* music packs (music.c; off in replays and sessions) */
+    if (!g_headless) { transmog_load("transmog.ini"); transmog_enable(g_transmog); }   /* transmog (transmog.c; off in replays and sessions) */
     if (g_opt.dlc) backup_unlock_dlc();                        /* before the game reads the save */
     if (getenv("DQIX_MODE")) g_classic = strcmp(getenv("DQIX_MODE"), "enhanced") != 0;   /* tests */
     /* real pixels on high-DPI Windows setups (not stretched by the system), so
@@ -1659,6 +1665,7 @@ static void menu_sync(void) {
     menu_check(MI_TEXPACK, g_tex_pack); menu_check(MI_TEXUP, g_tex_up); menu_check(MI_TEXDUMP, g_tex_dump);
     for (int i = MI_TEXPACK; i <= MI_TEXFOLDER; i++) menu_enable(i, g_gl != 0);
     menu_check(MI_MUSPACK, g_mus_pack); menu_check(MI_MUSNAMES, g_mus_names);
+    menu_check(MI_TRANSMOG, g_transmog);
     menu_check(MI_SOFT_SHADOWS, g_gl_soft_alpha != 0); menu_enable(MI_SOFT_SHADOWS, g_gl && !g_classic);
     menu_check(MI_SMOOTH_SHADE, g_gl_soft_shade != 0); menu_enable(MI_SMOOTH_SHADE, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_gl_outline == (i == 0 ? 1 : i == 1 ? 2 : 0)); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
@@ -2678,6 +2685,33 @@ static void do_action(int id) {
         break;
     }
     case MI_MUSEXPORT: music_export_start(); break;
+    case MI_TRANSMOG:
+        g_transmog = !g_transmog;
+        transmog_enable(g_transmog);
+        transmog_refresh();
+        notice(g_transmog ? "Transmog on" : "Transmog off");
+        break;
+    case MI_TMEDIT:                                              /* adds the party's names and what they wear, then opens it */
+        transmog_load(NULL);                                     /* what is in the file first: edits not reloaded yet stay */
+        transmog_save();
+        open_folder("transmog.ini");
+        notice("transmog.ini: replace \"worn\" with an item number, save, then Mods > Reload transmog.ini");
+        break;
+    case MI_TMITEMS: {                                           /* every piece of equipment's number, from the ROM, in the game's language */
+        int n = transmog_write_items("transmog_items.txt", g_fw_language);
+        if (n < 0) { notice("Couldn't write transmog_items.txt (the item names weren't found in the ROM)"); break; }
+        open_folder("transmog_items.txt");
+        notice("transmog_items.txt: %d items, by slot", n);
+        break;
+    }
+    case MI_TMRELOAD: {
+        int n = transmog_load(NULL);
+        transmog_refresh();
+        if (transmog_ignored()) notice("transmog.ini: %d look%s; %d ignored (a number not of that slot: head 12xxx, torso 13xxx, arms 14-15xxx...)", n, n == 1 ? "" : "s", transmog_ignored());
+        else if (n) notice("transmog.ini: %d look%s%s", n, n == 1 ? "" : "s", g_transmog ? "" : " (turn Mods > Transmog on)");
+        else notice("transmog.ini: no looks found. Under a character's name, replace \"worn\" with an item number (torso = 13621)");
+        break;
+    }
     case MI_MODS_HELP:
         info_box(SDL_MESSAGEBOX_INFORMATION, "Mods",
             "Texture packs: PNG pictures in the textures folder (next to the game) are drawn instead of the game's own textures, "
@@ -2693,7 +2727,12 @@ static void do_action(int id) {
             "else the whole file; jingles (ME_) play once. The game's fades and pauses carry over. "
             "Export the game's songs writes each as a WAV file (with its loop) to music\\export, to hear which is which; "
             "a WAV with a loop works in the music folder too. "
-            "music_pack_volume in settings.ini sets how loud they are. While playing together (Wireless) the game's own music plays.", g_win);
+            "music_pack_volume in settings.ini sets how loud they are. While playing together (Wireless) the game's own music plays.\n\n"
+            "Transmog: a character looks as if they wore other equipment, while what they really wear (and every number) stays the same. "
+            "Choose the looks opens transmog.ini with each character you have met, a line per slot and what is worn there; "
+            "replace \"worn\" with an item's number (Item numbers for transmog lists them all, from your game), "
+            "then Reload transmog.ini: the party is dressed again at once. "
+            "Your save isn't changed. While playing together (Wireless) everyone looks as they are.", g_win);
         break;
     case MI_HD_TEXT:
         if (g_gl) {
@@ -3105,6 +3144,7 @@ void frontend_frame(void) {
     if (!g_headless) {                                          /* music packs: not while playing together (each DS's memory must match) */
         static int was = -1; int want = g_mus_pack && !session_running();
         if (want != was) { if (was >= 0 || !want) music_enable(want); was = want; }
+        transmog_block(session_running());                     /* transmog: the same (it changes what the game loads) */
         char nm[64]; if (music_now(nm, sizeof nm) && g_mus_names && g_win) notice("Music: %s", nm);   /* Mods > Show each song's name */
         music_export_poll();
     }

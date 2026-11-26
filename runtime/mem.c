@@ -135,20 +135,49 @@ static uint32_t unmapped_read(uint32_t a, int size) {
     return 0;
 }
 
+/* DQIX_WATCHREAD=addr[,len]: log the ARM9 code that reads those bytes
+ * (debugging; finding which function uses a value). Each reading place (its
+ * lr) is logged once, with the functions entered just before. */
+static uint32_t g_rwatch = 1, g_rwatch_len;
+static void rwatch_hit(uint32_t a, uint32_t v, int size) {
+    static uint32_t seen[512]; static int nseen;
+    uint32_t lr = g_arm9.r[14];
+    for (int i = 0; i < nseen; i++) if (seen[i] == lr) return;
+    if (nseen < 512) seen[nseen++] = lr;
+    fprintf(stderr, "[f%llu] watchread: read%d %08x = %x (lr %08x %s)\n", (unsigned long long)g_frame, size * 8, a, v, lr, recomp_func_name(lr));
+    trace_dump(stderr, getenv("DQIX_TRACEN") ? atoi(getenv("DQIX_TRACEN")) : 8);
+}
+static inline int rwatching(uint32_t a, int size) {
+    if (__builtin_expect(g_rwatch == 1, 0)) {
+        const char* e = getenv("DQIX_WATCHREAD"); unsigned x = 0, n = 2;
+        if (e) sscanf(e, "%x,%u", &x, &n);
+        g_rwatch = x; g_rwatch_len = n ? n : 2;
+    }
+    return g_rwatch && a + (uint32_t)size > g_rwatch && a < g_rwatch + g_rwatch_len;
+}
+
 uint8_t mem_read8(uint32_t a) {
     if ((a >> 24) == 4) return (uint8_t)io9_read(a, 1);
     uint8_t* p = resolve(a, 0);
-    return p ? *p : (uint8_t)unmapped_read(a, 1);
+    uint8_t v = p ? *p : (uint8_t)unmapped_read(a, 1);
+    if (__builtin_expect(g_rwatch != 0, 0) && rwatching(a, 1)) rwatch_hit(a, v, 1);
+    return v;
 }
 uint16_t mem_read16(uint32_t a) {
     a &= ~1u;
     if ((a >> 24) == 4) return (uint16_t)io9_read(a, 2);
     uint8_t* p = resolve(a, 0);
     if (!p) return (uint16_t)unmapped_read(a, 2);
-    uint16_t v; memcpy(&v, p, 2); return v;
+    uint16_t v; memcpy(&v, p, 2);
+    if (__builtin_expect(g_rwatch != 0, 0) && rwatching(a, 2)) rwatch_hit(a, v, 2);
+    return v;
 }
 uint32_t mem_read32(uint32_t a) {
     a &= ~3u;
+    if (__builtin_expect(g_rwatch != 0, 0) && (a >> 24) != 4 && rwatching(a, 4)) {
+        uint8_t* p = resolve(a, 0);
+        if (p) { uint32_t v; memcpy(&v, p, 4); rwatch_hit(a, v, 4); return v; }
+    }
     if ((a >> 24) == 4) return io9_read(a, 4);
     uint8_t* p = resolve(a, 0);
     if (!p) return unmapped_read(a, 4);

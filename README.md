@@ -106,6 +106,9 @@ original)
   party's panels sit stacked in the bottom left.
 - **Single screen**: one screen as big as it gets, switched with a trigger.
 - **Top screen in the corner**: the same, with the field as on the DS.
+- **Transmog** (Mods menu): a character looks as if they wore other
+  equipment, chosen in `transmog.ini`, while what they really wear and every
+  number stay the same (see [docs/MODS.md](docs/MODS.md)).
 - Coming: a free camera (see the roadmap).
 
 **Multiplayer, from anywhere**

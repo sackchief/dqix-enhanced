@@ -25,6 +25,7 @@ enum {
     MI_SOFT_SHADOWS = 270, MI_SMOOTH_SHADE, MI_HD_TEXT,
     MI_DISCORD = 340,
     MI_MUSPACK = 350, MI_MUSRELOAD, MI_MUSFOLDER, MI_MUSNAMES, MI_MUSEXPORT,
+    MI_TRANSMOG = 360, MI_TMEDIT, MI_TMRELOAD, MI_TMITEMS,
     MI_TEXPACK = 330, MI_TEXUP, MI_TEXDUMP, MI_TEXRELOAD, MI_TEXFOLDER, MI_MODS_HELP,
     MI_LANG1 = 300,                                                     /* English, French, German, Italian, Spanish (+0..4) */
     MI_SSIZE0 = 254,                                                    /* + 0..2: small, medium, large */
