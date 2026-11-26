@@ -1702,7 +1702,7 @@ static const char* CONTROLS_TEXT =
     "Widescreen's small screen: K corner (right stick click)   I size   O opacity (left stick click)\n"
     "Tab fast forward (on/off)   P pause   Ctrl+R reset (controller: hold Start+Select+L+R)   - / = volume\n"
     "F5 Classic / Enhanced   F4 3D resolution   F6 DS Lite screen   F7 DS Lite console   F8 actual size   F3 window size\n"
-    "F11 or Alt+Enter fullscreen (mouse at the top: menu bar)   F12 screenshot   F10 bug report   Esc leave fullscreen / quit (asks first)\n"
+    "F11 or Alt+Enter fullscreen (mouse at the top: menu bar)   F12 screenshot   F10 bug report   ` in-game menu   Esc leave fullscreen (in a window: the in-game menu)\n"
     "In fullscreen, double-click outside the touch screen to go back to the window.";
 
 /* the in-game menu's values (left / right): the volume */
@@ -3021,10 +3021,11 @@ static void handle_events(void) {
             SDL_Scancode k = e.key.keysym.scancode;
             if (g_cap_action >= 0) { capture_key(k, e.key.keysym.mod); break; }   /* Game > Controls: the new key */
             int in2 = g_win2 && e.key.windowID == SDL_GetWindowID(g_win2);   /* typed in the second window */
-            if (k == SDL_SCANCODE_ESCAPE) {                          /* the in-game menu (Exit and Fullscreen are in it) */
+            if (k == SDL_SCANCODE_ESCAPE) {                          /* fullscreen: back to a window; in a window: the in-game menu (` too) */
                 if (in2 && g_win2_full) second_window_fullscreen();
+                else if (g_fullscreen) do_action(MI_FULL);
                 else if (g_gl) ingame_menu_open();
-                else if (g_fullscreen) do_action(MI_FULL); else quit_ask();
+                else quit_ask();
                 break;
             }
             if (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)) { if (in2) { second_window_fullscreen(); settings_save(); } else do_action(MI_FULL); break; }

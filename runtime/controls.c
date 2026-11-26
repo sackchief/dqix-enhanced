@@ -40,7 +40,7 @@ const ControlAction g_ctl[CA_N] = {
     [CA_REPORT] = { "bug_report", "Bug report", -1 },
     [CA_HDTEXT] = { "hd_text", "HD text", -1 },
     [CA_COMPARE] = { "compare_textures", "Mods: the game's own textures (hold)", -1 },
-    [CA_MENU] = { "menu", "The in-game menu (also Esc)", -1 },
+    [CA_MENU] = { "menu", "The in-game menu (also Esc in a window)", -1 },
 };
 
 int g_ctl_key[CA_N][2];
@@ -61,7 +61,8 @@ void controls_defaults(void) {
     K(CA_LCD, SDL_SCANCODE_F6, 0); K(CA_SHELL, SDL_SCANCODE_F7, 0); K(CA_ACTUAL, SDL_SCANCODE_F8, 0);
     K(CA_VOLDOWN, SDL_SCANCODE_MINUS, 0); K(CA_VOLUP, SDL_SCANCODE_EQUALS, 0);
     K(CA_RESET, SDL_SCANCODE_R | CTL_MOD_CTRL, 0); K(CA_SHOT, SDL_SCANCODE_F12, 0); K(CA_REPORT, SDL_SCANCODE_F10, 0);
-    K(CA_HDTEXT, SDL_SCANCODE_F1, 0); K(CA_COMPARE, SDL_SCANCODE_GRAVE, 0);
+    K(CA_HDTEXT, SDL_SCANCODE_F1, 0); K(CA_COMPARE, SDL_SCANCODE_BACKSLASH, 0);
+    K(CA_MENU, SDL_SCANCODE_GRAVE, 0);                                  /* ` (under Esc; Esc too, in a window) */
 #undef K
     /* the controller by position (like a DS): right = A, bottom = B, top = X, left = Y */
     g_ctl_pad[CA_A] = SDL_CONTROLLER_BUTTON_B; g_ctl_pad[CA_B] = SDL_CONTROLLER_BUTTON_A;
@@ -236,6 +237,12 @@ void controls_load(void) {
     fclose(f);
     /* new in version 2 (v32): the Share button takes a screenshot, unless that button already has a job */
     if (version < 2 && g_ctl_pad[CA_SHOT] == CTL_NONE && controls_pad_owner(SDL_CONTROLLER_BUTTON_MISC1) < 0) g_ctl_pad[CA_SHOT] = SDL_CONTROLLER_BUTTON_MISC1;
+    /* new in version 3 (v34): ` opens the in-game menu; the textures' comparison (it had `) moves to \ */
+    if (version < 3) {
+        for (int s = 0; s < 2; s++) if (g_ctl_key[CA_COMPARE][s] == SDL_SCANCODE_GRAVE) g_ctl_key[CA_COMPARE][s] = 0;
+        if (!g_ctl_key[CA_COMPARE][0] && !g_ctl_key[CA_COMPARE][1] && controls_key_action(SDL_SCANCODE_BACKSLASH, 0) < 0) g_ctl_key[CA_COMPARE][0] = SDL_SCANCODE_BACKSLASH;
+        if (!g_ctl_key[CA_MENU][0] && !g_ctl_key[CA_MENU][1] && controls_key_action(SDL_SCANCODE_GRAVE, 0) < 0) g_ctl_key[CA_MENU][0] = SDL_SCANCODE_GRAVE;
+    }
 }
 
 void controls_save(void) {
@@ -243,7 +250,7 @@ void controls_save(void) {
     FILE* f = fopen(INI, "w");
     if (!f) return;
     fprintf(f, "# Dragon Quest IX controls (Game > Controls on Windows). The game writes this file.\n");
-    fprintf(f, "# version 2\n");
+    fprintf(f, "# version 3\n");
     fprintf(f, "# action = key | second key | controller button\n");
     fprintf(f, "# Keys by name (X, Return, Left Shift, F9, -, Ctrl+R), or none.\n");
     fprintf(f, "# Controller (by position): a (bottom) b (right) x (left) y (top) back guide start leftstick rightstick\n");
