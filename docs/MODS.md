@@ -127,3 +127,24 @@ How it works and what it covers:
   model on its own and needs one).
 - While playing together (Wireless) and in replays of bug reports, everyone
   looks as they are: the games must stay identical in memory.
+
+## Modified ROMs (ROM hacks)
+
+A ROM hack of Dragon Quest IX (USA or Europe) can be built like the game
+itself: the recompiler translates the code it finds in the ROM, the hack's
+own code included. Before that, the build checks the ROM against the symbol
+map it was made with: every direct call into the main code has to land where
+the map says. Another version of the game misses in almost all of them, and
+is refused. A hack that rewrites a few calls for its own code (DQ9 mod v4:
+12 of 64774) is allowed, up to 0.5% of them; the build then says so, and
+`build/region/mismatches.txt` lists every call that differs.
+
+Code that a hack adds to the ITCM in blocks of its own is put together with
+the game's. Calls into the hack's code that the map would send elsewhere are
+found by their address and compiled. A few, where it can't tell which
+overlay is meant, are run in the interpreter when they are reached (the log
+says "interpreting code at ...").
+
+Enhanced's own features (widescreen, HD text, transmog...) hook particular
+functions of the game. A hack that changes one of those may not work with
+that feature.
