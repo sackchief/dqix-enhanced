@@ -14,8 +14,15 @@ are in another order on each ROM: they are found by their SVC number.
 
 For the USA ROM the files are used as they are. For the European ROM this
 writes <out>/arm9 (the symbol map) and <out>/hle.txt, tags.txt, patches.txt,
-interpret.txt, wrap.txt with every main-module address moved, after checking each call
-in the map against the ROM's own instructions.
+interpret.txt, wrap.txt with every main-module address moved.
+
+For both, each direct call into the main code that the map knows is checked
+against the ROM's own instructions first. Another version of the game differs
+in most of them (the USA ROM read as the European one: 56163 of 64774), so
+more than 0.5% stops the build. A modified ROM (a ROM hack) rewrites a few
+for its own code (DQ9 mod v4: 12); those are allowed, and the recompiler
+follows the ROM's own instructions. Every call that differs is listed in
+<out>/mismatches.txt.
 
 Prints the region (usa or eur); the build uses it to choose the files.
 """
@@ -106,10 +113,11 @@ def map_symbols(src, dst, mp, is_main):
 
 
 def map_relocs(src, dst, mp, is_main):
+    """dst None: only read them (the USA ROM)."""
     if not os.path.exists(src):
         return []
     rel = []
-    with open(src) as f, open(dst, "w") as out:
+    with open(src) as f, open(dst or os.devnull, "w") as out:
         for line in f:
             m = REL_RE.match(line.rstrip("\n"))
             if not m:
@@ -161,15 +169,82 @@ def map_list(src, dst, mp):
             out.write(line)
 
 
+MAX_BAD = 0.005             # share of the checked calls that may differ (a ROM hack's own)
+
+
+def check_calls(checks, region, out):
+    """Every direct call into the main module must land where the map says,
+    but for a few (a ROM hack's own hooks). Lists those in <out>/mismatches.txt."""
+    n = 0
+    bad = []
+    for mod, data, base, rel in checks:
+        for fr, kind, to, tmod in rel:
+            if tmod != "main" or "call" not in kind:
+                continue
+            t = bl_target(data, base, fr, kind.startswith("thumb"))
+            n += 1
+            if t is None or (t & ~1) != (to & ~1) and (t & ~3) != (to & ~3):
+                bad.append((mod, fr, t, to))
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, "mismatches.txt")
+    with open(path, "w") as f:
+        f.write(f"# {region} ROM: {len(bad)} of {n} direct calls into the main code differ from the symbol map\n"
+                "# <module> <call address> <where the ROM's call goes> <where the map says it goes>\n")
+        for mod, fr, t, to in bad:
+            f.write(f"{mod} {fr:08x} {'-' if t is None else f'{t:08x}'} {to:08x}\n")
+    for mod, fr, t, to in bad[:5]:
+        print(f"region: {mod} call at {fr:08x} goes to {'nothing' if t is None else f'{t:08x}'}, "
+              f"the map says {to:08x}", file=sys.stderr)
+    name = "European" if region == "eur" else "USA"
+    if len(bad) > n * MAX_BAD:
+        sys.exit(f"region: {len(bad)} of {n} calls don't match: this ROM isn't the {name} version this was made for "
+                 f"(all of them: {path})")
+    if bad:
+        print(f"region: {len(bad)} of {n} calls differ from the map (a modified ROM?): the ROM's own are used "
+              f"(listed in {path})", file=sys.stderr)
+
+
+def tcm_and_overlays(usa, extract, dst, mp):
+    """(module, code, base, relocs) for the ITCM, DTCM and every overlay; with dst,
+    also writes their symbols and relocs there with main addresses moved."""
+    import yaml
+    checks = []
+    ovs = yaml.safe_load(open(os.path.join(extract, "arm9_overlays", "overlays.yaml")))["overlays"]
+    for sub in sorted(os.listdir(usa)):
+        if not os.path.isdir(os.path.join(usa, sub)):
+            continue
+        dirs = [sub] if sub != "overlays" else [os.path.join(sub, o) for o in sorted(os.listdir(os.path.join(usa, sub)))]
+        for d in dirs:
+            if dst:
+                os.makedirs(os.path.join(dst, d))
+                map_symbols(os.path.join(usa, d, "symbols.txt"), os.path.join(dst, d, "symbols.txt"), mp, False)
+            rel = map_relocs(os.path.join(usa, d, "relocs.txt"), dst and os.path.join(dst, d, "relocs.txt"), mp, False)
+            name = os.path.basename(d)
+            if name.startswith("ov"):
+                ov = next((o for o in ovs if o["id"] == int(name[2:])), None)
+                if ov is None:
+                    sys.exit(f"region: this ROM has no overlay {name[2:]}: it isn't the version this was made for")
+                checks.append((name, open(os.path.join(extract, "arm9_overlays", ov["file_name"]), "rb").read(),
+                               ov["base_address"], rel))
+            else:
+                y = yaml.safe_load(open(os.path.join(extract, "arm9", f"{name}.yaml")))
+                checks.append((name, open(os.path.join(extract, "arm9", f"{name}.bin"), "rb").read(),
+                               y["base_address"], rel))
+    return checks
+
+
 def main():
     rom, extract, out = sys.argv[1], sys.argv[2], sys.argv[3]
     code = game_code(rom)
-    if code != "YDQP":
-        print("usa")
-        return
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     usa = os.path.join(root, "config", "usa", "arm9")
     arm9 = open(os.path.join(extract, "arm9", "arm9.bin"), "rb").read()
+    if code != "YDQP":
+        same = lambda a: a
+        checks = [("main", arm9, 0x02000000, map_relocs(os.path.join(usa, "relocs.txt"), None, same, True))]
+        check_calls(checks + tcm_and_overlays(usa, extract, None, same), "usa", out)
+        print("usa")
+        return
     mp = Map(arm9)
     for line in open(os.path.join(usa, "symbols.txt")):
         name = line.split(" ", 1)[0]
@@ -182,39 +257,9 @@ def main():
         shutil.rmtree(dst)
     os.makedirs(dst)
     map_symbols(os.path.join(usa, "symbols.txt"), os.path.join(dst, "symbols.txt"), mp.main, True)
-    checks = [(arm9, 0x02000000, map_relocs(os.path.join(usa, "relocs.txt"), os.path.join(dst, "relocs.txt"), mp.main, True))]
-    import yaml
-    for sub in sorted(os.listdir(usa)):
-        if not os.path.isdir(os.path.join(usa, sub)):
-            continue
-        dirs = [sub] if sub != "overlays" else [os.path.join(sub, o) for o in sorted(os.listdir(os.path.join(usa, sub)))]
-        for d in dirs:
-            os.makedirs(os.path.join(dst, d))
-            map_symbols(os.path.join(usa, d, "symbols.txt"), os.path.join(dst, d, "symbols.txt"), mp.main, False)
-            rel = map_relocs(os.path.join(usa, d, "relocs.txt"), os.path.join(dst, d, "relocs.txt"), mp.main, False)
-            name = os.path.basename(d)
-            if name.startswith("ov"):
-                ovs = yaml.safe_load(open(os.path.join(extract, "arm9_overlays", "overlays.yaml")))["overlays"]
-                ov = next(o for o in ovs if o["id"] == int(name[2:]))
-                checks.append((open(os.path.join(extract, "arm9_overlays", ov["file_name"]), "rb").read(), ov["base_address"], rel))
-            else:
-                y = yaml.safe_load(open(os.path.join(extract, "arm9", f"{name}.yaml")))
-                checks.append((open(os.path.join(extract, "arm9", f"{name}.bin"), "rb").read(), y["base_address"], rel))
-
-    # every direct call into the main module must land where the map says
-    n = bad = 0
-    for data, base, rel in checks:
-        for fr, kind, to, mod in rel:
-            if mod != "main" or "call" not in kind:
-                continue
-            t = bl_target(data, base, fr, kind.startswith("thumb"))
-            n += 1
-            if t is None or (t & ~1) != (to & ~1) and (t & ~3) != (to & ~3):
-                bad += 1
-                if bad <= 5:
-                    print(f"region: call at {fr:08x} goes to {t if t is None else hex(t)}, the map says {to:08x}", file=sys.stderr)
-    if bad:
-        sys.exit(f"region: {bad} of {n} calls don't match: this ROM isn't the European version this was made for")
+    checks = [("main", arm9, 0x02000000,
+               map_relocs(os.path.join(usa, "relocs.txt"), os.path.join(dst, "relocs.txt"), mp.main, True))]
+    check_calls(checks + tcm_and_overlays(usa, extract, dst, mp.main), "eur", out)
 
     for name in ("hle.txt", "tags.txt", "patches.txt", "interpret.txt", "wrap.txt"):
         map_list(os.path.join(root, name), os.path.join(out, name), mp.main)

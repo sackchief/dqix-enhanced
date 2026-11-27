@@ -38,7 +38,8 @@ command -v $PY >/dev/null 2>&1 || { echo "   Python is missing from the build to
 STEP="extracting the game's code (tools/extract_rom.py)"; echo "== Extracting the game's code"
 $PY tools/extract_rom.py "$ROM" build/extract
 STEP="recompiling it to C"; echo "== Recompiling it to C (about a minute)"
-# the symbol map and address lists are the USA version's; region.py moves them for the European one
+# the symbol map and address lists are the USA version's; region.py checks the ROM against them
+# (a few changed calls are a ROM hack's own: build/region/mismatches.txt) and moves them for the European one
 REGION=$($PY tools/region.py "$ROM" build/extract build/region)
 if [ "$REGION" = eur ]; then CFG=build/region; CONFIG=build/region/arm9; else CFG=.; CONFIG=config/usa/arm9; fi
 # code compiled for the other version (or before this check existed) doesn't link with this one: start over

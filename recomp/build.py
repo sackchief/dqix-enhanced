@@ -239,6 +239,11 @@ class Recompiler:
                 cands = [self.by_name[kind]]
             elif kind in ("overlay", "overlays") and ids:
                 cands = [self.by_name[f"ov{int(x):03d}"] for x in ids.split(",")]
+            if cands and not any(m.contains(target) for m in cands):
+                # the map's module doesn't hold the target: the ROM's call was
+                # changed (a ROM hack's hook into its own code); find it by address
+                self.stats["calls_not_as_in_map"] += 1
+                cands = []
         if not cands:
             if from_mod.ovl_id >= 0 and from_mod.contains(target):
                 cands = [from_mod]
