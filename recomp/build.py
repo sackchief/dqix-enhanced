@@ -224,6 +224,8 @@ class Recompiler:
         self.by_name = {m.name: m for m in mods}
         self.stats = defaultdict(int)
         self.tags = {}             # (module, call address) -> tag: see --tags
+        self.cpatches = {}         # (module, address) -> (new word, option): see --patch ('... if <option>')
+        self._alt = {}             # module name -> a Decoder over its code with the conditional patches in
         self.problems = []
         self.pending = []
 
@@ -470,10 +472,37 @@ class Recompiler:
             scale, signed = 1, True
         return n, esize, scale, signed
 
+    def alt_decoder(self, mod):
+        """A Decoder over mod's code with its conditional patches applied."""
+        if mod.name not in self._alt:
+            data = bytearray(mod.data)
+            for (name, a), (word, _) in self.cpatches.items():
+                if name == mod.name:
+                    data[a - mod.base:a - mod.base + 4] = word.to_bytes(4, "little")
+            self._alt[mod.name] = Decoder(mod.base, bytes(data))
+        return self._alt[mod.name]
+
     def emit_func(self, func):
         mod = func.module
         dec = Decoder(mod.base, mod.data)
         insns, labels = self.discover(func, dec)
+        # Conditional patches ('... if <option>' in --patch): both instructions
+        # are translated and the runtime's g_patch_<option> picks one. The new
+        # one may only be a plain instruction or a branch to code already here.
+        alts = {}
+        for a in insns:
+            if (mod.name, a) not in self.cpatches:
+                continue
+            if func.thumb:
+                raise SystemExit(f"patch {mod.name} {a:08x}: conditional patches are ARM only")
+            alt = self.alt_decoder(mod).arm(a)
+            if alt.flow == BRANCH and alt.target in insns:
+                labels.add(alt.target)
+            elif alt.flow != SEQ:
+                raise SystemExit(f"patch {mod.name} {a:08x}: a conditional patch must be a plain instruction "
+                                 "or a branch inside the same function")
+            alts[a] = (alt, self.cpatches[(mod.name, a)][1])
+            self.stats["conditional_patches"] += 1
         order = sorted(insns)
         has_jump_reg = any(insns[a].flow == JUMP_REG for a in order)
         # Only a function that explicitly loads lr with an address (not a call,
@@ -565,6 +594,14 @@ class Recompiler:
                 raise AssertionError(i.flow)
             if i.cond:
                 s = f"if (COND_{i.cond}) {{ {s} }}"
+            alt_falls = False
+            if a in alts:
+                alt, opt = alts[a]
+                sa = (alt.body or ";") if alt.flow == SEQ else branch(alt.target, a)
+                if alt.cond:
+                    sa = f"if (COND_{alt.cond}) {{ {sa} }}"
+                s = f"if (g_patch_{opt}) {{ /* {alt.mn} */ {sa} }} else {{ {s} }}"
+                alt_falls = alt.flow == SEQ or bool(alt.cond)
             out.append(f"    /* {a:08x} {i.mn} */ {s}")
             # Does execution continue at a + size?
             if i.cond:
@@ -575,6 +612,7 @@ class Recompiler:
                 falls = prev_sets_lr  # `mov lr, pc; bx rX` is a call
             else:
                 falls = False
+            falls = falls or alt_falls
             prev_sets_lr = i.sets_lr_pc
             if falls:
                 nxt = a + i.size
@@ -596,10 +634,28 @@ PRELUDE = '#include "cpu.h"\n#include "funcs.h"\n\n'
 
 def apply_patches(mods, path):
     """Override instruction words in the code we translate. The ROM itself is
-    untouched (the runtime still compares overlays against the original)."""
+    untouched (the runtime still compares overlays against the original).
+
+      <module> <address> <new word>                          always
+      <module> <address> <new word> if <option> [was <old>]  when the runtime's
+          g_patch_<option> is set (a setting); both are translated. With
+          'was', only if the ROM has <old> there (a modified ROM may not).
+    Returns {(module, address): (new word, option)} for the conditional ones."""
     by_name = {m.name: m for m in mods}
+    cond = {}
     for line in open(path):
         line = line.split("#")[0].split()
+        if len(line) in (5, 7) and line[3] == "if" and (len(line) == 5 or line[5] == "was"):
+            m = by_name[line[0]]
+            addr, word, opt = int(line[1], 16), int(line[2], 16), line[4]
+            off = addr - m.base
+            old = int.from_bytes(m.data[off:off + 4], "little")
+            if len(line) == 7 and old != int(line[6], 16):
+                print(f"patch {m.name} {addr:08x} (if {opt}): the ROM has {old:08x} there, not {line[6]}: left out")
+                continue
+            cond[(m.name, addr)] = (word, opt)
+            print(f"patch {m.name} {addr:08x}: {old:08x} -> {word:08x} if {opt}")
+            continue
         if len(line) != 3:
             continue
         m = by_name[line[0]]
@@ -610,6 +666,7 @@ def apply_patches(mods, path):
         data[off:off + 4] = word.to_bytes(4, "little")
         m.data = bytes(data)
         print(f"patch {m.name} {addr:08x}: {old:08x} -> {word:08x}")
+    return cond
 
 
 def main():
@@ -620,15 +677,15 @@ def main():
     ap.add_argument("--per-file", type=int, default=400)
     ap.add_argument("--hle", help="file listing '<module> <addr> [name]' functions the runtime provides instead (as hle_<name>, or under the generated name)")
     ap.add_argument("--interpret", help="file listing '<module> <addr>' functions to run in the interpreter (code that changes at run time)")
-    ap.add_argument("--patch", help="file listing '<module> <addr> <new 32-bit ARM word>' instruction overrides (e.g. removing anti-piracy traps)")
+    ap.add_argument("--patch", help="file listing '<module> <addr> <new 32-bit ARM word>' instruction overrides (e.g. removing anti-piracy traps), or '... if <option> [was <old>]' ones the runtime's g_patch_<option> switches")
     ap.add_argument("--wrap", help="file listing '<module> <addr> [name]' functions recompiled as <cname>_orig: the runtime provides <cname> (or, named, wrap_<name>, which calls wrap_<name>_orig), around the game's own code")
     ap.add_argument("--tags", help="file listing '<module> <call addr> <tag>': the 3D drawn during these calls carries the tag (e.g. the stylus arrow, hidden while walking with a stick); the game's code is unchanged")
     args = ap.parse_args()
 
     mods = load_modules(args.extract, args.config)
-    if args.patch:
-        apply_patches(mods, args.patch)
+    cpatches = apply_patches(mods, args.patch) if args.patch else {}
     rc = Recompiler(mods)
+    rc.cpatches = cpatches
     if args.tags:
         for line in open(args.tags):
             line = line.split("#")[0].split()
@@ -707,6 +764,8 @@ def main():
             path = os.path.join(args.out, f"{m.name}_{k // args.per_file:02d}.c")
             with write_if_changed(path) as f:
                 f.write(PRELUDE)
+                for opt in sorted({o for _, o in rc.cpatches.values()}):
+                    f.write(f"extern int g_patch_{opt};   /* a setting: see patches.txt */\n")
                 for fn in mf[k:k + args.per_file]:
                     f.write(code[(m.name, fn.addr)])
                     f.write("\n\n")

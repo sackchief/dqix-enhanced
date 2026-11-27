@@ -96,6 +96,32 @@ original)
 - **Walk in any direction with the left stick** (on at first): the stick
   steers like the DS stylus while you walk around, instead of the D-pad's 8
   directions (without the stylus's arrow on the screen).
+- **Free camera**: L and R turn the camera everywhere, also in the towns and
+  dungeons where the game keeps it still, inside camera zones (a courtyard
+  seen from far above), on the boat, and all the way round (the right stick
+  too, wherever the camera takes L/R). Some places
+  were only made to be seen from the usual angles; from others, walls or
+  floors may be missing. While it is on, the back of one-sided walls, bushes
+  and trees is drawn too (`free_camera_both_sides = 0` in settings.ini to
+  compare with the DS's way); what was never modelled stays missing. Off
+  while playing together. (It changes seven instructions of the field
+  camera, `func_020a212c` and `func_020a299c`, while recompiling:
+  `patches.txt`, `... if free_camera`. Four of them are what the "Dragon
+  Quest IX - Complete" ROM hack's camera changes in memory while the game
+  runs, which the recompiled code never reads; that hack's camera stays
+  still inside camera zones.) **Zoom**: the mouse wheel, the right stick
+  up/down, or E (closer) and R (further) (Game > Controls) bring the camera
+  from 40% to 300% of the game's distance; further than usual, the distance
+  fog is left out (it is set up for the usual distance). The game's own
+  placing of the camera (`func_0202e5d8`, in `wrap.txt`) is followed by
+  scaling its offset from the point it looks at, for the field camera only;
+  the game's stored height and distance stay as they are.
+- **Camera at its usual distance everywhere**: some places (a courtyard, a
+  square) have a camera of their own that pulls far away and high up as you
+  walk in; with this on the camera stays as it is everywhere else. Off while
+  playing together. (The field camera blends towards a place's camera zone in
+  `func_020a299c`; one instruction, `patches.txt`, `... if camera_no_zoom`,
+  makes it never count the hero as inside one.)
 - **Basic Widescreen**: the action drawn wider than the DS's screen, so you see
   more of the world left and right, with the other screen (the map, the
   battle commands) small in a corner: pick the corner, size and how
@@ -175,6 +201,7 @@ folder. **Don't share the `game` or `build` folders**: they contain the game.
 | D-pad | arrow keys | D-pad / left stick |
 | A / B / X / Y | X / Z / S / A | right / bottom / top / left button (by position, on any controller) |
 | L / R (turn the camera) | Q / W | shoulder buttons, or the right stick while walking |
+| (Free camera: closer / further) | E / R, mouse wheel | right stick up / down |
 | START / SELECT | Enter / Right Shift | Start / Back |
 | touch screen | left mouse button on the bottom screen | |
 

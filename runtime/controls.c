@@ -41,6 +41,8 @@ const ControlAction g_ctl[CA_N] = {
     [CA_HDTEXT] = { "hd_text", "HD text", -1 },
     [CA_COMPARE] = { "compare_textures", "Mods: the game's own textures (hold)", -1 },
     [CA_MENU] = { "menu", "The in-game menu (also Esc in a window)", -1 },
+    [CA_ZOOMIN] = { "camera_closer", "Free camera: closer (hold; also the mouse wheel, the right stick)", -1 },
+    [CA_ZOOMOUT] = { "camera_further", "Free camera: further (hold)", -1 },
 };
 
 int g_ctl_key[CA_N][2];
@@ -62,7 +64,8 @@ void controls_defaults(void) {
     K(CA_VOLDOWN, SDL_SCANCODE_MINUS, 0); K(CA_VOLUP, SDL_SCANCODE_EQUALS, 0);
     K(CA_RESET, SDL_SCANCODE_R | CTL_MOD_CTRL, 0); K(CA_SHOT, SDL_SCANCODE_F12, 0); K(CA_REPORT, SDL_SCANCODE_F10, 0);
     K(CA_HDTEXT, SDL_SCANCODE_F1, 0); K(CA_COMPARE, SDL_SCANCODE_BACKSLASH, 0);
-    K(CA_MENU, SDL_SCANCODE_GRAVE, 0);                                  /* ` (under Esc; Esc too, in a window) */
+    K(CA_MENU, SDL_SCANCODE_GRAVE, 0);
+    K(CA_ZOOMIN, SDL_SCANCODE_E, 0); K(CA_ZOOMOUT, SDL_SCANCODE_R, 0);                                  /* ` (under Esc; Esc too, in a window) */
 #undef K
     /* the controller by position (like a DS): right = A, bottom = B, top = X, left = Y */
     g_ctl_pad[CA_A] = SDL_CONTROLLER_BUTTON_B; g_ctl_pad[CA_B] = SDL_CONTROLLER_BUTTON_A;
@@ -235,6 +238,16 @@ void controls_load(void) {
         g_ctl_key[a][0] = parse_key(f1); g_ctl_key[a][1] = parse_key(f2); g_ctl_pad[a] = parse_pad(f3);
     }
     fclose(f);
+    /* new here (the free camera's zoom): its default keys only if nobody else has them now */
+    int seen_zoom = 0;
+    { FILE* g = fopen(INI, "r"); char l[300]; while (g && fgets(l, sizeof l, g)) if (!strncmp(l, "camera_closer", 13)) seen_zoom = 1; if (g) fclose(g); }
+    if (!seen_zoom)
+        for (int a = CA_ZOOMIN; a <= CA_ZOOMOUT; a++)
+            for (int t = 0; t < CA_N; t++)
+                if (t != a && g_ctl_key[a][0] && (g_ctl_key[t][0] == g_ctl_key[a][0] || g_ctl_key[t][1] == g_ctl_key[a][0])) g_ctl_key[a][0] = 0;
+    /* version 4: "further" moved from D to R (a file saved by the first build with the zoom has D) */
+    if (seen_zoom && version < 4 && g_ctl_key[CA_ZOOMOUT][0] == SDL_SCANCODE_D && controls_key_owner(SDL_SCANCODE_R, NULL) < 0)
+        g_ctl_key[CA_ZOOMOUT][0] = SDL_SCANCODE_R;
     /* new in version 2 (v32): the Share button takes a screenshot, unless that button already has a job */
     if (version < 2 && g_ctl_pad[CA_SHOT] == CTL_NONE && controls_pad_owner(SDL_CONTROLLER_BUTTON_MISC1) < 0) g_ctl_pad[CA_SHOT] = SDL_CONTROLLER_BUTTON_MISC1;
     /* new in version 3 (v34): ` opens the in-game menu; the textures' comparison (it had `) moves to \ */
@@ -250,7 +263,7 @@ void controls_save(void) {
     FILE* f = fopen(INI, "w");
     if (!f) return;
     fprintf(f, "# Dragon Quest IX controls (Game > Controls on Windows). The game writes this file.\n");
-    fprintf(f, "# version 3\n");
+    fprintf(f, "# version 4\n");
     fprintf(f, "# action = key | second key | controller button\n");
     fprintf(f, "# Keys by name (X, Return, Left Shift, F9, -, Ctrl+R), or none.\n");
     fprintf(f, "# Controller (by position): a (bottom) b (right) x (left) y (top) back guide start leftstick rightstick\n");

@@ -37,6 +37,7 @@
 #include "discord.h"
 #include "music.h"
 #include "transmog.h"
+#include "free_camera.h"
 #include "text_hd.h"
 #include "menu.h"
 #include "version.h"
@@ -72,6 +73,8 @@ static int g_discord = 1;                                         /* Modern > Sh
 static int g_tex_pack = 1, g_tex_up = 0, g_tex_dump = 0;           /* Mods (gl_render.c) */
 static int g_mus_pack = 1, g_mus_names = 0, g_mus_vol = 70;      /* Mods: music packs (music.c) */
 static int g_transmog = 1;                                        /* Mods: transmog (transmog.c, transmog.ini) */
+static int g_free_cam;                                            /* Modern: free camera (free_camera.c) */
+static int g_no_zoom;                                             /* Modern: the camera at its usual distance everywhere (free_camera.c) */
 static int g_hd_text = 0;                                            /* Enhanced: the game's letters redrawn at full resolution (text_hd.h) */
 static int g_res_auto = 1;                                        /* 3D resolution: as sharp as the screen shows it (else g_scale3d) */
 static int g_small_opacity = 50;                                  /* widescreen: how solid the small screen over the field is (O), % */
@@ -598,6 +601,9 @@ static void settings_load(void) {
         else if (!strcmp(key, "texture_packs")) g_tex_pack = atoi(val) != 0;
         else if (!strcmp(key, "music_packs")) g_mus_pack = atoi(val) != 0;
         else if (!strcmp(key, "transmog")) g_transmog = atoi(val) != 0;
+        else if (!strcmp(key, "free_camera")) g_free_cam = atoi(val) != 0;
+        else if (!strcmp(key, "free_camera_both_sides")) g_free_camera_both_sides = atoi(val) != 0;
+        else if (!strcmp(key, "camera_no_zoom")) g_no_zoom = atoi(val) != 0;
         else if (!strcmp(key, "music_song_names")) g_mus_names = atoi(val) != 0;
         else if (!strcmp(key, "music_pack_volume")) { int v = atoi(val); if (v >= 0 && v <= 200) g_mus_vol = v; }
         else if (!strcmp(key, "discord")) g_discord = atoi(val) != 0;
@@ -669,6 +675,12 @@ static void settings_save(void) {
     fprintf(f, "music_packs = %d\n", g_mus_pack);
     fprintf(f, "# Mods: transmog (characters look as if they wore the equipment chosen in transmog.ini): 0 or 1\n");
     fprintf(f, "transmog = %d\n", g_transmog);
+    fprintf(f, "# Modern: free camera (L/R turn the camera everywhere, all the way round; off while playing together): 0 or 1\n");
+    fprintf(f, "free_camera = %d\n", g_free_cam);
+    fprintf(f, "# Modern: with the free camera, also draw the back of one-sided walls, bushes and trees (0: as the DS, to compare): 0 or 1\n");
+    fprintf(f, "free_camera_both_sides = %d\n", g_free_camera_both_sides);
+    fprintf(f, "# Modern: the camera at its usual distance everywhere (no zoom-outs in special places; off while playing together): 0 or 1\n");
+    fprintf(f, "camera_no_zoom = %d\n", g_no_zoom);
     fprintf(f, "# Mods: a notice with each song's name as it starts (to find which file replaces it): 0 or 1\n");
     fprintf(f, "music_song_names = %d\n", g_mus_names);
     fprintf(f, "# Mods: how loud the recordings are against the game's sounds, in %% (0 to 200)\n");
@@ -1666,6 +1678,8 @@ static void menu_sync(void) {
     for (int i = MI_TEXPACK; i <= MI_TEXFOLDER; i++) menu_enable(i, g_gl != 0);
     menu_check(MI_MUSPACK, g_mus_pack); menu_check(MI_MUSNAMES, g_mus_names);
     menu_check(MI_TRANSMOG, g_transmog);
+    menu_check(MI_FREECAM, g_free_cam);
+    menu_check(MI_NOZOOM, g_no_zoom);
     menu_check(MI_SOFT_SHADOWS, g_gl_soft_alpha != 0); menu_enable(MI_SOFT_SHADOWS, g_gl && !g_classic);
     menu_check(MI_SMOOTH_SHADE, g_gl_soft_shade != 0); menu_enable(MI_SMOOTH_SHADE, g_gl && !g_classic);
     for (int i = 0; i < 3; i++) { menu_check(MI_OUTLINE0 + i, g_gl_outline == (i == 0 ? 1 : i == 1 ? 2 : 0)); menu_enable(MI_OUTLINE0 + i, g_gl && !g_classic); }
@@ -2687,6 +2701,16 @@ static void do_action(int id) {
         break;
     }
     case MI_MUSEXPORT: music_export_start(); break;
+    case MI_NOZOOM:
+        g_no_zoom = !g_no_zoom;
+        camera_no_zoom_update(g_no_zoom);
+        notice(g_no_zoom ? (session_running() ? "Camera at its usual distance (not while playing together)" : "Camera at its usual distance everywhere") : "Camera zoom-outs as the game has them");
+        break;
+    case MI_FREECAM:
+        g_free_cam = !g_free_cam;
+        free_camera_update(g_free_cam);
+        notice(g_free_cam ? (session_running() ? "Free camera on (not while playing together)" : "Free camera on") : "Free camera off");
+        break;
     case MI_TRANSMOG:
         g_transmog = !g_transmog;
         transmog_enable(g_transmog);
@@ -2831,6 +2855,12 @@ static void do_action(int id) {
             "Walk in any direction with the left stick (on at first): on the DS the D-pad walks in 8 directions and only the stylus walks in any. With this on, "
             "a controller's left stick steers like the stylus while you walk around (the game's own stylus walking). In menus, dialogue and "
             "battles the stick stays a D-pad. Friends in a session don't need it on.\n\n"
+            "Free camera: L and R turn the camera everywhere, also in the towns and dungeons where the game keeps it still, "
+            "and all the way round. The mouse wheel, the right stick up/down, or E and R (Game > Controls) bring the camera closer or "
+            "further (40% to 300%; further than usual leaves out the distance fog). Some places were only made to be seen from the usual angles: the back of walls, bushes and "
+            "trees is drawn too while it is on, but what was never made (the back of a building) stays missing. While playing together (Wireless) the camera is as the game has it.\n\n"
+            "Camera at its usual distance everywhere: some places (a courtyard, a square) pull the camera far away and high up as "
+            "you walk in. With this on the camera stays as it is everywhere else. While playing together (Wireless) the camera is as the game has it.\n\n"
             "Basic Widescreen: the action (the field, or a battle) is drawn wider than the DS's screen, so you see more of the world left and right, "
             "and the other screen (the map, or the battle commands) sits small in a corner over it. K (or the right stick click) moves it to "
             "the next corner, I changes its size, O (or the left stick click) how see-through it is; it turns solid while the mouse is on it. "
@@ -3062,6 +3092,12 @@ static void handle_events(void) {
         }
         switch (e.type) {
         case SDL_QUIT: quit_ask(); break;
+        case SDL_MOUSEWHEEL:                                     /* free camera: closer / further */
+            if (g_win && e.wheel.windowID == SDL_GetWindowID(g_win) && g_patch_free_camera) {
+                free_camera_zoom_wheel(e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y);
+                notice("Camera distance %d%%", free_camera_zoom_percent());
+            }
+            break;
         case SDL_KEYDOWN: {
             if (e.key.repeat || !g_win) break;
             SDL_Scancode k = e.key.keysym.scancode;
@@ -3147,6 +3183,8 @@ void frontend_frame(void) {
         static int was = -1; int want = g_mus_pack && !session_running();
         if (want != was) { if (was >= 0 || !want) music_enable(want); was = want; }
         transmog_block(session_running());                     /* transmog: the same (it changes what the game loads) */
+        free_camera_update(g_free_cam);                        /* free camera: the same (the camera's angle is in memory) */
+        camera_no_zoom_update(g_no_zoom);                      /* the camera's distance: the same */
         char nm[64]; if (music_now(nm, sizeof nm) && g_mus_names && g_win) notice("Music: %s", nm);   /* Mods > Show each song's name */
         music_export_poll();
     }
@@ -3166,6 +3204,9 @@ void frontend_frame(void) {
             /* widescreen: the other screen shows while the swap button is held */
             if (g_peek && !controls_key_held(CA_SWAP, ks) && !controls_pad_held(CA_SWAP, g_pad)) g_peek = 0;
             g_tex_compare = controls_key_held(CA_COMPARE, ks) || controls_pad_held(CA_COMPARE, g_pad);
+            free_camera_zoom_frame(controls_key_held(CA_ZOOMIN, ks) || controls_pad_held(CA_ZOOMIN, g_pad),
+                                   controls_key_held(CA_ZOOMOUT, ks) || controls_pad_held(CA_ZOOMOUT, g_pad),
+                                   g_pad ? SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_RIGHTY) : 0);
             if (!wide_now()) g_peek = 0;
             { static int tp = -1; if (tp < 0) tp = getenv("DQIX_TEST_PEEK") != NULL; if (tp && wide_now()) g_peek = 1; }   /* tests */
             /* reset: Start + Select + L + R held for a second on the controller (wherever they are mapped) */
