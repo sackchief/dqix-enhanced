@@ -14,5 +14,7 @@ int free_camera_zoom_percent(void);
  * fog out (it is set up for the usual distance; from further away all of the
  * field would be in it). */
 int free_camera_no_fog(void);
+int free_camera_cutscene(void);         /* a scene plays (free-to-walk byte 2) */
+int free_camera_both_sides_now(void);   /* gpu3d.c: draw both sides now (free camera on, not in a scene) */
 int field_camera_takes_lr(void);         /* L/R would turn the field camera now (input.c, the right stick) */
 extern int g_free_camera_both_sides;     /* gpu3d.c: draw the back of one-sided polygons too while the free camera is on */

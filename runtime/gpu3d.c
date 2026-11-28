@@ -413,7 +413,7 @@ static void submit_polygon(void) {
      * game's own angles, and many walls, bushes and trees are one-sided
      * polygons whose back the DS leaves out. Turned all the way round, the
      * camera looks at those backs: they are drawn too while it is on. */
-    int both_sides = g_patch_free_camera && g_free_camera_both_sides;
+    int both_sides = free_camera_both_sides_now();
     if (dot < 0) { if (!both_sides && !(cur_poly_attr & (1 << 7))) { last_strip = NULL; return; } }
     else if (dot > 0) { if (!both_sides && !(cur_poly_attr & (1 << 6))) { last_strip = NULL; return; } }
     if (g_wide_side > 0 && g_renderer3d) wide_submit(nverts, facing);

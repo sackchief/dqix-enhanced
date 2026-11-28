@@ -112,7 +112,17 @@ original)
   still inside camera zones.) **Zoom**: the mouse wheel, the right stick
   up/down, or E (closer) and R (further) (Game > Controls) bring the camera
   from 40% to 300% of the game's distance; further than usual, the distance
-  fog is left out (it is set up for the usual distance). The game's own
+  fog is left out (it is set up for the usual distance). **L+R together**
+  is the game's own recentring (the camera swings back behind the hero, or
+  to the map's own angle where the DS keeps it fixed), here 1.25 times as
+  fast; it also sets the zoom back to 100%. Inside a camera zone, where the
+  game's recentring doesn't run, L+R swings the camera back to the zone's
+  own angle. **Cutscenes**: while a scene plays (the game's free-to-walk
+  byte 02109da4 is 2 and the next byte 1), L/R follow the game's own locks
+  and the zoom doesn't change; once the scene's own camera takes over (the
+  field camera stops), walls are drawn one-sided as on the DS, so a scene
+  camera standing behind a wall still sees through it. Your angle and zoom
+  stay as they were and apply again afterwards. The game's own
   placing of the camera (`func_0202e5d8`, in `wrap.txt`) is followed by
   scaling its offset from the point it looks at, for the field camera only;
   the game's stored height and distance stay as they are.
