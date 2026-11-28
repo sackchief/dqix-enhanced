@@ -37,6 +37,11 @@ main 02072e94 part_name
 # func_ov017_0218f5a4(field, object, 0, 0, [sp] force): makes a party member's
 # model again if its items changed (or forced); transmog.c notes the field.
 ov017 0218f5a4 model_check
+# func_ov017_021b3e14(model state): puts a party member's loaded parts
+# together (colours, face expression) and hides the face under a helmet of
+# models 500-599 (021b46a4: the head entry's model number / 100 == 5).
+# transmog.c: while it runs, the cache's model numbers (+0x10) say the looks.
+ov017 021b3e14 model_parts
 # The party on the field, once a frame: after Reload transmog.ini or
 # Mods > Transmog, transmog.c makes the party's models again at its end
 # (the check above, forced), so a new look shows at once.
