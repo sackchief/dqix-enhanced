@@ -25,7 +25,7 @@ param([string]$Out, [switch]$Test)
 $ErrorActionPreference = 'Stop'
 $Project = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Packages = 'make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-SDL2 mingw-w64-ucrt-x86_64-python'
-$Optional = 'mingw-w64-ucrt-x86_64-python-yaml'      # nice to have: the build works without it
+$Optional = 'mingw-w64-ucrt-x86_64-python-yaml mingw-w64-ucrt-x86_64-sdl3'      # nice to have: the build works without them (SDL3.dll: for launchers that look for it)
 $InstallerUrl = 'https://github.com/msys2/msys2-installer/releases/download/nightly-x86_64/msys2-x86_64-latest.exe'
 
 # Straight to the console or the log (not into a function's result).

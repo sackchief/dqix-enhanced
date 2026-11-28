@@ -94,7 +94,12 @@ MINGW*|MSYS*)
     make -j"$JOBS" -f build.mk OS=Windows_NT GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.dll \
          CFLAGS="-O1 -w" DEFS=-DRECOMP_TRACE SDL_CFLAGS="$(sdl2-config --cflags)" SDL_LIBS="-lSDL2" \
          LDFLAGS="-static-libgcc -Wl,--stack,67108864" RES="$RES" "$EXE" core
-    cp /ucrt64/bin/SDL2.dll game/ ;;
+    cp /ucrt64/bin/SDL2.dll game/
+    # SDL3.dll too: the game uses SDL2, but some launchers (RecompLauncher) look for
+    # SDL3.dll next to the game and stop with "failed loading SDL3 library" without it.
+    # Best effort: a build without it still works.
+    [ -f /ucrt64/bin/SDL3.dll ] || pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-sdl3 >/dev/null 2>&1 || true
+    [ -f /ucrt64/bin/SDL3.dll ] && cp /ucrt64/bin/SDL3.dll game/ || echo "   (SDL3.dll couldn't be added: only some launchers need it.)" ;;
 *)
     EXE=game/dqix
     make -j"$JOBS" -f build.mk GEN=build/recomp GEN7=build/recomp7 OBJ=build/obj FRONTEND=sdl OUT="$EXE" CORE=game/dqixcore.so PIC=-fPIC \
