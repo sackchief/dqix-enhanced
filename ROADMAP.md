@@ -166,6 +166,8 @@ the same room.
 
 ## Done
 
+- [x] **v34.1**: SDL3.dll next to the game for RecompLauncher ("failed
+      loading SDL3 library"); DQIX Enhanced listed on RecompLauncher.
 - [x] **v34 released as stable**: the in-game menu (` or the controller's
       Home button; nothing opens a window of its own), Linux as beta (also
       ARM64, https relay), macOS and the Steam Deck as experimental,

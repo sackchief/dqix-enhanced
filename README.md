@@ -141,6 +141,12 @@ European version, others can be tried; the European one plays in the language
 chosen in Game > Language), Windows 10 or 11 (64-bit), about 3 GB of free space, and the internet the
 first time.
 
+**The easiest way: [RecompLauncher](https://recomplauncher.com/game/dqix-enhanced).**
+Pick DQIX Enhanced there, choose your ROM, and it builds, starts and updates
+the game for you (Windows and Linux).
+
+Or install it yourself:
+
 1. Download the latest **stable** release from the
    **[Releases page](https://github.com/sackchief/dqix-enhanced/releases)**
    (*Source code (zip)*) and unzip it. The **Nightly** release there is the
