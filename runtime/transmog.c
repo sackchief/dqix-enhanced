@@ -359,8 +359,9 @@ static void probe(Cpu* c, const Cpu* in, uint32_t base, uint32_t list, const int
     for (int k = 0; k < N_LOOK; k++) mem_write16(list + 2u * (uint32_t)k, (uint16_t)ids[k]);
     *c = *in; wrap_fill_items_orig(c);
     for (int k = 0; k < N_LOOK; k++)
-        if (ids[k] >= 0 && (int16_t)mem_read16(base + (uint32_t)(k * ENTRY) + 0x18) == ids[k])
+        if (ids[k] >= 0 && (int16_t)mem_read16(base + (uint32_t)(k * ENTRY) + 0x18) == ids[k]) {
             learn(ids[k], mem_read32(base + (uint32_t)(k * ENTRY) + 0x10));
+        }
 }
 void wrap_fill_items(Cpu* c) {
     Cpu in = *c;
@@ -389,11 +390,17 @@ void wrap_fill_items(Cpu* c) {
     }
     if (!need) return;
     Cpu out = *c;
+    uint32_t keep[N_LOOK * ENTRY / 4];                         /* the cache as the game filled it */
+    for (int j = 0; j < N_LOOK * ENTRY / 4; j++) keep[j] = mem_read32(base + 4u * (uint32_t)j);
     probe(c, &in, base, list, ids);
     for (int k = 0; k < N_LOOK; k++)
         if (probe_empty[k] && (int16_t)mem_read16(base + (uint32_t)(k * ENTRY) + 0x18) == ids[k]) learn_empty(ids[k], base + (uint32_t)(k * ENTRY));
     for (int k = 0; k < N_LOOK; k++) mem_write16(list + 2u * (uint32_t)k, (uint16_t)real[k]);
     *c = in; wrap_fill_items_orig(c);                          /* the real items again */
+    /* and exactly as before: filling skips the slots with nothing worn (-1),
+     * which would keep the look just learnt there, and the game's numbers
+     * come from this cache */
+    for (int j = 0; j < N_LOOK * ENTRY / 4; j++) mem_write32(base + 4u * (uint32_t)j, keep[j]);
     *c = out;
     if (g_log) fprintf(stderr, "[f%llu] transmog: learnt the looks for %s (%d known)\n", (unsigned long long)g_frame, (const char*)name, g_nknown);
 }
@@ -404,7 +411,20 @@ void wrap_fill_items(Cpu* c) {
  * (and the equipment numbers it checks, like "no arm armour: the torso's
  * sleeves") say the chosen looks; then everything is put back. */
 void wrap_part_name_orig(Cpu* c);
+static void log_part(uint32_t out, int obj, int k, uint32_t ret) {
+    if (g_log <= 0) return;
+    char n[24]; int i = 0;
+    for (; i < 23; i++) { n[i] = (char)mem_read8(out + (uint32_t)i); if (!n[i]) break; }
+    n[i] = 0;
+    fprintf(stderr, "[f%llu] transmog: part %d of object %d: %s%s\n", (unsigned long long)g_frame, k, obj, ret ? n : "(none)", transmog_active() ? "" : " (transmog off)");
+}
+void wrap_part_name_logged(Cpu* c);
 void wrap_part_name(Cpu* c) {
+    uint32_t out = c->r[0]; int obj = (int)c->r[1], k = (int)c->r[2];
+    wrap_part_name_logged(c);
+    log_part(out, obj, k, c->r[0]);
+}
+void wrap_part_name_logged(Cpu* c) {
     test_reload();
     g_last_part = g_frame; g_asked = 0;                        /* models are being made (wrap_party_frame waits) */
     if (!transmog_active()) { wrap_part_name_orig(c); return; }
@@ -428,7 +448,8 @@ void wrap_part_name(Cpu* c) {
             empty = known_empty(empty_item(k, d));
             /* (the whip or bow a battle names alone always has a model) */
             if (!empty || (no_cache && empty->item < 0)) continue;
-        } else if (!usable(s, item, (int16_t)mem_read16(ent + 0x18)) || !known_look(item, &look)) continue;
+        } else if ((k >= 7 && (int16_t)mem_read16(eq) < 0)        /* nothing worn there: the game makes no part */
+                   || !usable(s, item, (int16_t)mem_read16(ent + 0x18)) || !known_look(item, &look)) continue;   /* (nor the hair under a hat) */
         for (int j = 0; j < EMPTY_WORDS; j++) saved[k][j] = mem_read32(ent + 8 + 4u * (uint32_t)j);
         saved_eq[k] = mem_read16(eq);
         if (empty) {
@@ -444,6 +465,35 @@ void wrap_part_name(Cpu* c) {
         else { mem_write32(ent + 0x10, saved[k][2]); mem_write16(ent + 0x18, (uint16_t)saved[k][4]); }   /* (+0x10, +0x18) */
         mem_write16(eq, saved_eq[k]);
     }
+}
+
+/* func_ov017_021b3e14(model state, object index at +8): puts a party
+ * member's loaded parts together. It also hides the face under a helmet
+ * whose model is 500-599 (021b46a4: func_020de234 of the head's cache entry,
+ * / 100 == 5; the Dragon Warrior Helmet's is 504), so it must see the looks'
+ * model numbers too: only the +0x10 words are changed while it runs (the
+ * item numbers at +0x18 stay, the colours are found by them). */
+void wrap_model_parts_orig(Cpu* c);
+void wrap_model_parts(Cpu* c) {
+    if (!transmog_active()) { wrap_model_parts_orig(c); return; }
+    uint32_t d = object_chardata((int)(int16_t)mem_read16(c->r[0] + 8));
+    Entry* e = NULL;
+    if (d) { uint8_t name[NAME_LEN + 1]; read_name(d, name); e = find(name, 0); }
+    if (!e) { wrap_model_parts_orig(c); return; }
+    uint32_t saved[N_LOOK]; int patched[N_LOOK] = { 0 };
+    for (int s = 0; s < TM_SLOTS; s++) {
+        int item = e->look[s], k = SLOT_INDEX[s];
+        uint32_t ent = d + CACHE + (uint32_t)(k * ENTRY), look;
+        int real = (int16_t)mem_read16(ent + 0x18);
+        if (item == TM_EMPTY) {
+            const EmptyEntry* empty = known_empty(empty_item(k, d));
+            if (!empty) continue;
+            look = empty->w[2];                                 /* (+0x10) */
+        } else if ((k >= 7 && (int16_t)mem_read16(d + CHAR_EQUIPMENT + 2u * (uint32_t)equip_index(k)) < 0) || !usable(s, item, real) || !known_look(item, &look)) continue;
+        saved[k] = mem_read32(ent + 0x10); mem_write32(ent + 0x10, look); patched[k] = 1;
+    }
+    wrap_model_parts_orig(c);
+    for (int k = 0; k < N_LOOK; k++) if (patched[k]) mem_write32(d + CACHE + (uint32_t)(k * ENTRY) + 0x10, saved[k]);
 }
 
 /* func_ov017_0218f5a4(field, object, 0, 0, [sp] force): makes a party
