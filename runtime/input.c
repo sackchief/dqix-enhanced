@@ -14,6 +14,7 @@
 #include <math.h>
 #include "nds.h"
 #include "session.h"
+#include "free_camera.h"
 
 typedef struct { uint64_t frame; uint32_t keys; int touch; int tx, ty; uint32_t len; } Press;
 
@@ -84,14 +85,17 @@ static int stick_walk(int* tx, int* ty) {
  * The game turns the camera while L or R is held (as far as each place
  * allows) and leaves it where it is on release. The right stick presses them:
  * left = L, right = R, more often the further it is pushed, so a light push
- * turns the camera slowly. Only while the hero is free to walk (in menus and
- * battles L and R do other things); not while L or R is pressed itself. To
+ * turns the camera slowly. Only while the field camera would turn with L and R
+ * (in menus, dialogue and battles they do other things; on the boat too);
+ * not while L or R is pressed itself. To
  * the game it is just L and R. */
 #define CAM_DEAD 9000
 static uint32_t stick_camera(uint32_t keys) {
     static int acc;                                     /* presses owed, in 1/1000 */
     int x = g_fe_rstick_x, m = x < 0 ? -x : x;
-    if (m < CAM_DEAD || !free_to_walk() || (keys & (3u << 8))) { acc = 0; return 0; }
+    /* the field camera would take L/R now (free_camera.c: not in menus, dialogue or battles; also on the
+     * boat, where the game's "free to walk" flag is 0), and not in a land menu (flag 2) to be sure */
+    if (m < CAM_DEAD || !field_camera_takes_lr() || g_main_ram[WALK_FLAG] == 2 || (keys & (3u << 8))) { acc = 0; return 0; }
     int duty = 250 + 750 * (m - CAM_DEAD) / (32767 - CAM_DEAD);   /* a quarter of the frames .. every frame */
     acc += duty;
     if (acc < 1000) return 0;

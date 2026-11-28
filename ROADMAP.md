@@ -101,9 +101,11 @@ Optional ways to play the DS never had, all off by default (Modern menu).
 - [ ] **Widescreen, finishing touches**: in battles the sky picture is
       only as wide as the DS's screen, so the far sides show the game's
       paler backup sky. Pop-in at the sides while playing with friends.
-- [ ] **A free camera**: turning further than the game allows in each place,
-      and maybe tilt and zoom (the right stick already turns the camera as
-      far as the game allows).
+- [x] **A free camera** (Modern > Free camera): turning all the way round
+      everywhere (towns, dungeons, camera zones, the boat, the flying train),
+      zoom (mouse wheel, right stick up/down, E / R), the back of one-sided
+      polygons drawn; Modern > Camera at its usual distance everywhere. Tilt
+      not yet.
 - [ ] Check the analog stick in battles and every kind of menu.
 
 ## Multiplayer

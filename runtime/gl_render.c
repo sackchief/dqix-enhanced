@@ -12,6 +12,7 @@
  *    where the 3D layer shows and how it blends (gpu2d.c); the composition
  *    pass samples the high-resolution 3D there.
  * Everything is loaded through SDL_GL_GetProcAddress (no link-time GL). */
+#include "free_camera.h"
 #include "SDL.h"
 #include "SDL_opengl.h"
 #include <math.h>
@@ -1501,7 +1502,7 @@ static void gl_render_(const Frame3D* f) {
     float ec[24];
     for (int i = 0; i < 8; i++) { uint16_t c = IO16_(0x330 + i * 2); ec[i * 3] = (float)(c & 31) / 31.0f; ec[i * 3 + 1] = (float)((c >> 5) & 31) / 31.0f; ec[i * 3 + 2] = (float)((c >> 10) & 31) / 31.0f; }
     p_glUniform3fv(p_glGetUniformLocation(prog_post, "u_edgecol"), 8, ec);
-    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_fog"), (disp3d >> 7) & 1);
+    p_glUniform1i(p_glGetUniformLocation(prog_post, "u_fog"), ((disp3d >> 7) & 1) && !free_camera_no_fog());   /* not zoomed out (free_camera.c) */
     p_glUniform1i(p_glGetUniformLocation(prog_post, "u_fog_alpha_only"), (disp3d >> 6) & 1);
     uint16_t fcol = IO16_(0x358);
     p_glUniform4f(p_glGetUniformLocation(prog_post, "u_fogcol"), (float)(fcol & 31) / 31.0f, (float)((fcol >> 5) & 31) / 31.0f,

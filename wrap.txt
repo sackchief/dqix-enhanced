@@ -41,3 +41,18 @@ ov017 0218f5a4 model_check
 # Mods > Transmog, transmog.c makes the party's models again at its end
 # (the check above, forced), so a new look shows at once.
 ov017 0218e8c8 party_frame
+
+# Places a camera around the point it looks at: func_0202e5d8(camera, yaw,
+# height, distance) stores them at +0x70/+0x74/+0x78 and puts the camera
+# (+0x04) at the point looked at (+0x10) plus (0, height, the rest of the
+# distance) turned by the yaw. The field camera goes through it every frame.
+# Watched by free_camera.c (zoom, with Modern > Free camera): for the field
+# camera, the offset from the point looked at is scaled afterwards; the
+# stored height and distance stay the game's own.
+main 0202e5d8 camera_orbit
+# The field camera, once a frame: func_020a212c(camera, input on). free_camera.c
+# notes which camera object it is (only that one is zoomed) and that it ran
+# with L/R taken (the right stick turns it only then). On land it is called
+# through func_020a20d8; on the boat by other code; func_020a2b38 calls it with
+# input off to work out the default view (not counted).
+main 020a212c field_camera

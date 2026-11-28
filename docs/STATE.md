@@ -226,7 +226,9 @@ The ones before: `v32`, `v31`, `v30`, `v29`, `v28`, `v27`, `v26`. To go back: `g
   Switch controllers); Joy-Con pairs combined. Not tested with real pads
   here.
 - **nightly18**: the right stick (x) presses L / R while the walk flag is 1
-  and neither is held (input.c stick_camera): the game turns the camera
+  and neither is held (input.c stick_camera; since the free camera: while
+  the field camera takes L/R, free_camera.c field_camera_takes_lr, which
+  also covers the boat, where the walk flag is 0): the game turns the camera
   while L/R is held, as far as each area allows (towns and rooms ~45 deg
   each way, the world map not at all), and keeps it on release; duty 25% to
   100% by how far the stick is pushed, so a light push turns slowly

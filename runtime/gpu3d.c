@@ -15,6 +15,7 @@
  * line by line by the 2D engine as BG0. Without a new FLUSH the last list is
  * rendered again with the newly latched registers, like the hardware. */
 #include <stdlib.h>
+#include "free_camera.h"
 #include <string.h>
 #include "nds.h"
 #include "gpu3d.h"
@@ -135,13 +136,15 @@ static u32 vtx_num, vtx_in_poly, consecutive;
 static HPoly* last_strip;
 static u32 n_opaque;
 
-#define VTX_MAX 6144
+#define VTX_MAX 6144                  /* the DS's vertex and polygon RAM */
 #define POLY_MAX 2048
-static Vtx vram_bank_v[VTX_MAX * 2];
-static HPoly pram[POLY_MAX * 2];
+#define VTX_CAP (VTX_MAX * 2)          /* room for more while the free camera draws both sides */
+#define POLY_CAP (POLY_MAX * 2)
+static Vtx vram_bank_v[VTX_CAP * 2];
+static HPoly pram[POLY_CAP * 2];
 static Vtx* cur_vram; static HPoly* cur_pram;
 static u32 n_vtx, n_poly, cur_bank;
-static HPoly* render_list[POLY_MAX];
+static HPoly* render_list[POLY_CAP];
 static u32 render_n;
 static u32 flush_request, flush_attr;
 
@@ -406,8 +409,13 @@ static void submit_polygon(void) {
     while ((((nx >> 31) ^ (nx >> 63)) != 0) || (((ny >> 31) ^ (ny >> 63)) != 0) || (((nz >> 31) ^ (nz >> 63)) != 0)) { nx >>= 4; ny >>= 4; nz >>= 4; }
     s64 dot = (s64)v1->pos[0] * nx + (s64)v1->pos[1] * ny + (s64)v1->pos[3] * nz;
     int facing = dot <= 0;
-    if (dot < 0) { if (!(cur_poly_attr & (1 << 7))) { last_strip = NULL; return; } }
-    else if (dot > 0) { if (!(cur_poly_attr & (1 << 6))) { last_strip = NULL; return; } }
+    /* Free camera (free_camera.c): the field was made to be seen from the
+     * game's own angles, and many walls, bushes and trees are one-sided
+     * polygons whose back the DS leaves out. Turned all the way round, the
+     * camera looks at those backs: they are drawn too while it is on. */
+    int both_sides = free_camera_both_sides_now();
+    if (dot < 0) { if (!both_sides && !(cur_poly_attr & (1 << 7))) { last_strip = NULL; return; } }
+    else if (dot > 0) { if (!both_sides && !(cur_poly_attr & (1 << 6))) { last_strip = NULL; return; } }
     if (g_wide_side > 0 && g_renderer3d) wide_submit(nverts, facing);
     else if (w_frame_side != -1) w_frame_side = -2;              /* widescreen switched off during the frame */
 
@@ -427,7 +435,10 @@ static void submit_polygon(void) {
 
     nverts = clip_polygon(cv, nverts, clipstart, 1);
     if (nverts == 0) { last_strip = NULL; return; }
-    if (n_poly >= POLY_MAX || n_vtx + (u32)nverts > VTX_MAX) {
+    /* the back sides the free camera adds don't count against the DS's limit
+     * (else a busy town would run out and lose polygons it had on the DS) */
+    u32 poly_max = both_sides ? POLY_CAP : POLY_MAX, vtx_max = both_sides ? VTX_CAP : VTX_MAX;
+    if (n_poly >= poly_max || n_vtx + (u32)nverts > vtx_max) {
         last_strip = NULL;
         g_io[0x61] |= 0x20;                                         /* DISP3DCNT: polygon/vertex RAM overflow */
         return;
@@ -935,7 +946,7 @@ u32 gx_read(u32 off) {
         v |= 1u << 25 | 1u << 26;                                    /* FIFO less than half full, empty */
         return v;
     }
-    if (off == 0x604) return n_poly | (n_vtx << 16);
+    if (off == 0x604) return (n_poly > POLY_MAX ? POLY_MAX : n_poly) | ((n_vtx > VTX_MAX ? VTX_MAX : n_vtx) << 16);   /* (the free camera's extra sides beyond the DS's RAM) */
     if (off >= 0x620 && off < 0x630) return (u32)postest[(off - 0x620) / 4];
     if (off == 0x630) return (u32)(u16)vectest[0] | ((u32)(u16)vectest[1] << 16);
     if (off == 0x634) return (u32)(u16)vectest[2];
@@ -1106,7 +1117,7 @@ typedef struct {
     s32 xl, xr;
     u32 curvl, curvr, nextvl, nextvr;
 } RPoly;
-static RPoly rpolys[POLY_MAX];
+static RPoly rpolys[POLY_CAP];
 
 /* ---------------------------------------------------------------- textures */
 static inline u8 tex8(u32 a) { uint8_t* p = g_tex_slot[(a >> 17) & 3]; return p ? p[a & 0x1FFFF] : 0; }
@@ -1567,7 +1578,7 @@ static void final_pass(s32 y) {
             }
         }
     }
-    if (r_disp & (1 << 7)) {                                        /* fog (top two pixels) */
+    if ((r_disp & (1 << 7)) && !free_camera_no_fog()) {             /* fog (top two pixels); not zoomed out (free_camera.c) */
         int fogcolor = !(r_disp & (1 << 6));
         u32 fr, fg, fb; expand5(r_fogcolor, &fr, &fg, &fb);
         u32 fa = (r_fogcolor >> 16) & 0x1F;
@@ -1821,8 +1832,8 @@ int gpu3d_ui_unshift(int* x, int y) {
 
 
 /* GPU renderer: the render list as screen-space polygons with float attributes. */
-static Poly g_gl_polys[POLY_MAX];
-static const Poly* g_gl_order[POLY_MAX];
+static Poly g_gl_polys[POLY_CAP];
+static const Poly* g_gl_order[POLY_CAP];
 static void gl_frame(void) {
     {   static long long from = -2;                              /* DQIX_PRESENT_FROM=frame: no 3D drawn before it (tests: fast replays) */
         if (from == -2) { const char* e = getenv("DQIX_PRESENT_FROM"); from = e ? atoll(e) : -1; }
@@ -1933,8 +1944,8 @@ void gpu3d_vblank(void) {
         wcur_pram = &wpram[wbank ? WPOLY_MAX : 0]; wcur_vram = &wvram[wbank ? WVTX_MAX : 0];
         n_wpoly = n_wvtx = n_wopaque = 0; w_frame_side = -1;
         cur_bank ^= 1;
-        cur_vram = &vram_bank_v[cur_bank ? VTX_MAX : 0];
-        cur_pram = &pram[cur_bank ? POLY_MAX : 0];
+        cur_vram = &vram_bank_v[cur_bank ? VTX_CAP : 0];
+        cur_pram = &pram[cur_bank ? POLY_CAP : 0];
         n_vtx = 0; n_poly = 0; n_opaque = 0;
         flush_request = 0;
     }

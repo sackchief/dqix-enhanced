@@ -8,3 +8,34 @@
 # the field can't get the 257 KB block it needs and the game hangs.
 # Replace the allocation call (bl 0x02012d88) with a NOP.
 ov034 022a2878 e1a00000
+
+# Free camera (Modern > Free camera; off while playing together and in replays):
+# the camera turns with L/R everywhere and all the way round. The field camera
+# (func_020a212c, once a frame) ignores L/R where the map locks the camera
+# (flag 0x10 at +0x244) and keeps the angle out of a range between two limits.
+# Both are left out when g_patch_free_camera is set (runtime/free_camera.c);
+# the L/R ones use g_patch_free_camera_lr, which is off during cutscenes.
+# The same four changes as the "Dragon Quest IX - Complete" ROM hack's camera.
+main 020a21e0 e1a00000 if free_camera_lr was 13a07000   # movne r7, #0 (L): nop
+main 020a21e8 e1a00000 if free_camera_lr was 11a08007   # movne r8, r7 (R): nop
+main 020a2358 ea000002 if free_camera was da000002   # ble: b (no limit turning one way)
+main 020a23c8 e1a00000 if free_camera was b1a06000   # movlt r6, r0 (the other way): nop
+# Camera zones (below) also turn L/R off while the hero is inside: they set
+# +0x240 to 0, and the camera ignores L/R while it is 0.
+main 020a2200 e1a00000 if free_camera_lr was 03a07000   # moveq r7, #0 (+0x240 is 0): nop
+main 020a2204 e1a00000 if free_camera_lr was 01a08007   # moveq r8, r7: nop
+# Inside a camera zone that turns the camera (zone flag 4), func_020a299c
+# blends the angle from the usual one (+0x220) towards the zone's (+0x2ac)
+# every frame, so deep inside, L/R did nothing. Reading the zone's angle from
+# +0x220 instead keeps the player's angle; the zone's height and distance stay.
+main 020a2a1c e5961220 if free_camera was e59612ac   # ldr r1, [r6, #0x2ac]: [r6, #0x220]
+
+# No camera zoom-outs (Modern > Camera at its usual distance everywhere; off
+# while playing together and in replays): some places have a camera zone of
+# their own (yaw, height, distance and an offset of the point looked at, at
+# +0x298..+0x2c3 of the camera; zone flags 4/8 at +0x245), and the field
+# camera blends towards it as the hero walks in (func_020a299c: the depth
+# inside the zone, func_02032124, over the ramp at +0x2a8). With the setting
+# the hero is never counted as inside a zone, so the camera keeps its usual
+# distance, height and angle everywhere (runtime/free_camera.c).
+main 020a29f0 ea00004d if camera_no_zoom was da00004d   # ble (not inside): b (never inside)

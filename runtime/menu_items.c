@@ -144,6 +144,8 @@ const MenuItem g_menu_items[] = {
     END,
     SUB("&Modern"),
         IT(MI_ANALOG, "Walk in any &direction with the left stick", NULL),
+        IT(MI_FREECAM, "&Free camera: L/R turn the camera everywhere, all the way round", NULL),
+        IT(MI_NOZOOM, "Camera at its usual &distance everywhere (no zoom-outs in special places)", NULL),
         IT(MI_WIDE, "&Basic Widescreen: the action wide, the other screen in a corner", NULL),
         IT(MI_WIDE_DYN, "D&ynamic Widescreen (Experimental)", NULL),
         IT(MI_CORNER, "Top screen in the &corner (the field as on the DS)", NULL),
